@@ -106,7 +106,13 @@ importers:
       '@starknt/shutdown-handler-napi':
         specifier: ^0.0.3
         version: 0.0.3
+      '@starknt/shutdown-handler-napi-win32-x64-msvc':
+        specifier: ^0.0.3
+        version: 0.0.3
       '@starknt/sysproxy':
+        specifier: ^0.0.3
+        version: 0.0.3
+      '@starknt/sysproxy-win32-x64-msvc':
         specifier: ^0.0.3
         version: 0.0.3
       '@vscode/sudo-prompt':
@@ -7931,8 +7937,7 @@ snapshots:
   '@starknt/shutdown-handler-napi-win32-ia32-msvc@0.0.3':
     optional: true
 
-  '@starknt/shutdown-handler-napi-win32-x64-msvc@0.0.3':
-    optional: true
+  '@starknt/shutdown-handler-napi-win32-x64-msvc@0.0.3': {}
 
   '@starknt/shutdown-handler-napi@0.0.3':
     optionalDependencies:
@@ -7949,8 +7954,7 @@ snapshots:
   '@starknt/sysproxy-linux-x64-gnu@0.0.3':
     optional: true
 
-  '@starknt/sysproxy-win32-x64-msvc@0.0.3':
-    optional: true
+  '@starknt/sysproxy-win32-x64-msvc@0.0.3': {}
 
   '@starknt/sysproxy@0.0.3':
     optionalDependencies:

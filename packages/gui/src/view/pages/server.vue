@@ -3,7 +3,7 @@ import { defineComponent } from 'vue';
 
 import _ from 'lodash'
 import JsonEditor from '@/view/components/JsonEditor.vue'
-import { CheckOutlined, InfoCircleOutlined, PlusOutlined, MinusOutlined, SyncOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { CheckOutlined, CloudOutlined, InfoCircleOutlined, PlusOutlined, MinusOutlined, SyncOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import Plugin from '../mixins/plugin'
 
 export default defineComponent({
@@ -12,6 +12,7 @@ export default defineComponent({
   components: {
     JsonEditor,
     CheckOutlined,
+    CloudOutlined,
     InfoCircleOutlined,
     PlusOutlined,
     MinusOutlined,
@@ -210,6 +211,13 @@ export default defineComponent({
     },
     reSpeedTest () {
       this.$api.server.reSpeedTest()
+    },
+    hasCf (item) {
+      if (!item) {
+        return false
+      }
+      const list = (item.alive || []).concat(item.backupList || [])
+      return list.some((element) => element.cf === true)
     },
     registerSpeedTestEvent () {
       const listener = async (event, message) => {
@@ -510,6 +518,7 @@ export default defineComponent({
                 <a-card size="small" class="mt10" :title="key">
                   <template #extra>
                     <a href="javascript:void(0)" :title="key" style="cursor:default">
+                      <CloudOutlined v-if="hasCf(item)" style="color:#faad14;margin-right:4px" />
                       <CheckOutlined v-if="item.alive.length > 0" />
                       <InfoCircleOutlined v-else />
                     </a>
@@ -518,11 +527,32 @@ export default defineComponent({
                     v-for="(element, index) of item.backupList" :key="index" style="margin:2px;"
                     :title="element.title || `测速中：${element.host}`" :color="element.time ? (element.time > config.server.setting.lowSpeedDelay ? 'orange' : 'green') : (element.title ? 'red' : '')"
                   >
+                    <CloudOutlined v-if="element.cf" style="margin-right:2px" />
                     {{ element.host }} {{ element.time ? `${element.time}ms` : (element.title ? '' : '测速中') }} {{ element.dns }}
                   </a-tag>
                 </a-card>
               </a-col>
             </a-row>
+          </div>
+        </a-tab-pane>
+        <a-tab-pane key="10" tab="Cloudflare路由重定向">
+          <div v-if="activeTabKey === '10'" style="padding-right:10px">
+            <a-alert type="info" message="根据 Cloudflare 官方 IP 段（运行时动态获取），若访问域名解析到 Cloudflare IP，则自动改写为你指定的优选地址。" />
+            <a-form-item label="启用功能" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-checkbox v-model:checked="config.server.cloudflareRoute.enabled">
+                启用
+              </a-checkbox>
+            </a-form-item>
+            <a-form-item label="优选地址" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input
+                v-model:value="config.server.cloudflareRoute.preferredEndpoint"
+                placeholder="可填写 IP 地址或 CNAME 域名，例如 1.2.3.4 或 example.com"
+                spellcheck="false"
+              />
+              <div class="form-help">
+                可填写 IP 地址或 CNAME 域名；留空则不进行重写。
+              </div>
+            </a-form-item>
           </div>
         </a-tab-pane>
       </a-tabs>

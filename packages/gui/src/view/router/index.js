@@ -8,6 +8,7 @@ import Proxy from '../pages/proxy'
 import Server from '../pages/server'
 import Setting from '../pages/setting'
 import Help from '../pages/help'
+import Traffic from '../pages/traffic.vue'
 
 const routes = [
   { path: '/', redirect: '/index' },
@@ -16,6 +17,7 @@ const routes = [
   { path: '/proxy', component: Proxy },
   { path: '/setting', component: Setting },
   { path: '/help', component: Help },
+  { path: '/traffic', component: Traffic },
   { path: '/plugin/node', component: Node },
   { path: '/plugin/git', component: Git },
   { path: '/plugin/pip', component: Pip },
