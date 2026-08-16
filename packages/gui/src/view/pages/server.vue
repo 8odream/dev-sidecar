@@ -29,7 +29,29 @@ export default defineComponent({
       dnsMappings: [],
       speedTestList: [],
       whiteList: [],
+      tlsMappings: [],
       speedRefreshInterval: null,
+      tlsVersionOptions: [
+        {
+          label: 'TLS 1.2',
+          value: 'TLSv1.2',
+        },
+        {
+          label: 'TLS 1.3',
+          value: 'TLSv1.3',
+        },
+      ],
+      cfRouteDomains: [],
+      cfRouteModeOptions: [
+        {
+          label: '黑名单模式（名单内不重定向）',
+          value: 'blacklist',
+        },
+        {
+          label: '白名单模式（仅名单内重定向）',
+          value: 'whitelist',
+        },
+      ],
       whiteListOptions: [
         {
           label: '不代理',
@@ -100,6 +122,8 @@ export default defineComponent({
     ready () {
       this.initDnsMapping()
       this.initWhiteList()
+      this.initTlsMappings()
+      this.initCfRouteDomains()
       if (this.config.server.dns.speedTest.dnsProviders) {
         this.speedDns = this.config.server.dns.speedTest.dnsProviders
       }
@@ -107,6 +131,8 @@ export default defineComponent({
     async applyBefore () {
       this.submitDnsMappings()
       this.submitWhiteList()
+      this.submitTlsMappings()
+      this.submitCfRouteDomains()
       this.delEmptySpeedHostname()
     },
     async applyAfter () {
@@ -190,6 +216,90 @@ export default defineComponent({
         }
       }
       this.config.server.whiteList = whiteList
+    },
+
+    // TLS版本设置
+    initTlsMappings () {
+      this.tlsMappings = []
+      const tlsVersionMapping = this.config.server.setting.tlsVersionMapping || {}
+      for (const key in tlsVersionMapping) {
+        const conf = tlsVersionMapping[key]
+        if (typeof conf === 'string') {
+          this.tlsMappings.push({
+            key: key || '',
+            value: conf === 'TLSv1.3' ? 'TLSv1.3' : 'TLSv1.2',
+            enabled: true,
+          })
+        } else if (conf && typeof conf === 'object') {
+          this.tlsMappings.push({
+            key: key || '',
+            value: conf.version === 'TLSv1.3' ? 'TLSv1.3' : 'TLSv1.2',
+            enabled: conf.enabled !== false,
+          })
+        }
+      }
+    },
+    addTlsMapping () {
+      this.tlsMappings.unshift({ key: '', value: 'TLSv1.2', enabled: true })
+      this.focusFirst(this.$refs.tlsMappings)
+    },
+    deleteTlsMapping (item, index) {
+      this.tlsMappings.splice(index, 1)
+    },
+    submitTlsMappings () {
+      const tlsVersionMapping = {}
+      for (const item of this.tlsMappings) {
+        if (item.key) {
+          const hostname = this.handleHostname(item.key)
+          if (hostname) {
+            tlsVersionMapping[hostname] = {
+              enabled: item.enabled !== false,
+              version: item.value === 'TLSv1.3' ? 'TLSv1.3' : 'TLSv1.2',
+            }
+          }
+        }
+      }
+      this.config.server.setting.tlsVersionMapping = tlsVersionMapping
+    },
+
+    // Cloudflare 路由重定向
+    initCfRouteDomains () {
+      this.cfRouteDomains = []
+      const cfRoute = this.config.server.cloudflareRoute || (this.config.server.cloudflareRoute = {})
+      if (!cfRoute.mode) {
+        cfRoute.mode = 'blacklist'
+      }
+      if (!cfRoute.domains) {
+        cfRoute.domains = {}
+      }
+      for (const key in cfRoute.domains) {
+        if (cfRoute.domains[key]) {
+          this.cfRouteDomains.push({ key: key || '' })
+        }
+      }
+    },
+    addCfRouteDomain () {
+      this.cfRouteDomains.unshift({ key: '' })
+      this.focusFirst(this.$refs.cfRouteDomains)
+    },
+    deleteCfRouteDomain (item, index) {
+      this.cfRouteDomains.splice(index, 1)
+    },
+    submitCfRouteDomains () {
+      const cfRoute = this.config.server.cloudflareRoute || (this.config.server.cloudflareRoute = {})
+      const domains = {}
+      for (const item of this.cfRouteDomains) {
+        if (item.key) {
+          const hostname = this.handleHostname(item.key)
+          if (hostname) {
+            domains[hostname] = true
+          }
+        }
+      }
+      cfRoute.domains = domains
+      if (!cfRoute.mode || (cfRoute.mode !== 'whitelist' && cfRoute.mode !== 'blacklist')) {
+        cfRoute.mode = 'blacklist'
+      }
     },
     getSpeedTestConfig () {
       return this.config.server.dns.speedTest
@@ -369,6 +479,39 @@ export default defineComponent({
             />
           </div>
         </a-tab-pane>
+        <a-tab-pane key="tls" tab="TLS版本设置">
+          <div v-if="activeTabKey === 'tls'">
+            <a-row style="margin-top:10px">
+              <a-col span="21">
+                <div>指定域名使用的 TLS 版本：<span class="form-help">（域名配置可使用通配符或正则）</span></div>
+                <div class="form-help">
+                  例如 <code>production.cloudflare.docker.com</code> 选择 <code>TLS 1.2</code>。每行右侧开关可单独启用/停用；远程下发的规则会显示为停用状态，由你自行启用。未匹配到或停用的域名遵循“允许TLS1.2”开关。
+                </div>
+              </a-col>
+              <a-col span="3">
+                <a-button style="margin-left:8px" type="primary" @click="addTlsMapping()"><PlusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <a-row v-for="(item, index) of tlsMappings" ref="tlsMappings" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="13">
+                <a-input v-model:value="item.key" spellcheck="false" placeholder="例如 production.cloudflare.docker.com" />
+              </a-col>
+              <a-col :span="5">
+                <a-select v-model:value="item.value" class="w100">
+                  <a-select-option v-for="(item2) of tlsVersionOptions" :key="item2.value" :value="item2.value">
+                    {{ item2.label }}
+                  </a-select-option>
+                </a-select>
+              </a-col>
+              <a-col :span="3">
+                <a-switch v-model:checked="item.enabled" />
+              </a-col>
+              <a-col :span="3">
+                <a-button type="danger" @click="deleteTlsMapping(item, index)"><MinusOutlined /></a-button>
+              </a-col>
+            </a-row>
+          </div>
+        </a-tab-pane>
         <a-tab-pane key="4" tab="域名白名单">
           <div v-if="activeTabKey === '4'">
             <a-row style="margin-top:10px">
@@ -537,7 +680,7 @@ export default defineComponent({
         </a-tab-pane>
         <a-tab-pane key="10" tab="Cloudflare路由重定向">
           <div v-if="activeTabKey === '10'" style="padding-right:10px">
-            <a-alert type="info" message="根据 Cloudflare 官方 IP 段（运行时动态获取），若访问域名解析到 Cloudflare IP，则自动改写为你指定的优选地址。" />
+            <a-alert type="info" message="根据 Cloudflare 官方 IP 段（运行时动态获取），若访问域名解析到 Cloudflare IP，则自动改写为你指定的优选地址。预设 IP 优先级最高，不会被重定向。" />
             <a-form-item label="启用功能" :label-col="labelCol" :wrapper-col="wrapperCol">
               <a-checkbox v-model:checked="config.server.cloudflareRoute.enabled">
                 启用
@@ -553,6 +696,30 @@ export default defineComponent({
                 可填写 IP 地址或 CNAME 域名；留空则不进行重写。
               </div>
             </a-form-item>
+            <a-form-item label="模式" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-select v-model:value="config.server.cloudflareRoute.mode" class="w100">
+                <a-select-option v-for="(item2) of cfRouteModeOptions" :key="item2.value" :value="item2.value">
+                  {{ item2.label }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+            <hr>
+            <a-row style="margin-top:10px">
+              <a-col span="21">
+                <div>域名名单：<span class="form-help">（域名配置可使用通配符或正则，填法与“域名白名单”一致）</span></div>
+              </a-col>
+              <a-col span="3">
+                <a-button style="margin-left:8px" type="primary" @click="addCfRouteDomain()"><PlusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <a-row v-for="(item, index) of cfRouteDomains" ref="cfRouteDomains" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="21">
+                <a-input v-model:value="item.key" spellcheck="false" placeholder="例如 production.cloudflare.docker.com" />
+              </a-col>
+              <a-col :span="3">
+                <a-button type="danger" @click="deleteCfRouteDomain(item, index)"><MinusOutlined /></a-button>
+              </a-col>
+            </a-row>
           </div>
         </a-tab-pane>
       </a-tabs>
