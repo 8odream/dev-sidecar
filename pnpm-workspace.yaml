@@ -9,7 +9,6 @@ shamefullyHoist: true
 overrides:
   axios: '>=1.18.1'
   brace-expansion@<2.0.0: '1.1.11'
-  cross-spawn: '>=7.0.5'
   dns-packet: '>=5.6.1'
   form-data: '>=4.0.6'
   hoek: 'npm:@hapi/hoek@>=10.0.0'
