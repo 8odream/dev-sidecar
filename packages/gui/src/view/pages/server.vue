@@ -331,9 +331,32 @@ export default defineComponent({
     },
     registerSpeedTestEvent () {
       const listener = async (event, message) => {
-        console.log('get speed event', event, message)
         if (message.key === 'getList') {
-          this.speedTestList = message.value
+          // 数据验证和标准化
+          const validatedData = {}
+          for (const hostname in message.value) {
+            const item = message.value[hostname]
+            if (!item.backupList) {
+              console.warn(`Missing backupList for ${hostname}`)
+              continue
+            }
+
+            validatedData[hostname] = {
+              alive: item.alive || [],
+              backupList: item.backupList.map(ipObj => {
+                // 标准化IP地址格式
+                const standardized = {
+                  host: ipObj.host,
+                  port: ipObj.port || 443,
+                  dns: ipObj.dns || 'unknown',
+                  time: ipObj.time || null
+                }
+                return standardized
+              })
+            }
+          }
+
+          this.speedTestList = validatedData
         }
       }
       this.$api.ipc.on('speed', listener)
@@ -776,5 +799,104 @@ export default defineComponent({
   .ant-input-group-addon:first-child {
     width: 45px;
   }
+}
+.ipv6-tag {
+  position: relative;
+  padding-right: 45px !important;
+  margin-right: 5px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  min-width: 200px !important;
+}
+.ipv6-badge {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  background: #1890ff;
+  color: white;
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 16px;
+  height: 16px;
+}
+.ip-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  background-color: #fafafa;
+  border-radius: 4px;
+  margin-top: 8px;
+  max-width: 100%;
+  overflow: hidden;
+}
+.ip-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  background-color: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #666;
+  word-break: break-all;
+  max-width: calc(100% - 16px);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ip-item .ip-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ip-item .ip-speed {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+.ip-item .ip-speed.success {
+  color: #52c41a;
+}
+.ip-item .ip-speed.warning {
+  color: #faad14;
+}
+.ip-item .ip-speed.error {
+  color: #ff4d4f;
+}
+.domain-box {
+  margin-bottom: 16px;
+  padding: 12px;
+  background-color: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+.domain-box .domain-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.domain-box .domain-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.domain-box .domain-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  flex-shrink: 0;
 }
 </style>
