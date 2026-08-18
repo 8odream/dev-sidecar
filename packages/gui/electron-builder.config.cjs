@@ -86,8 +86,6 @@ module.exports = {
           { target: 'tar.gz', arch: ['x64', 'arm64', 'armv7l'] },
           { target: 'rpm', arch: ['x64', 'arm64', 'armv7l'] },
           { target: 'flatpak', arch: ['x64'] },
-          // Arch Linux (fpm/pacman), 产物为 .pkg.tar.xz, 可直接 pacman -U 安装
-          { target: 'pacman', arch: ['x64', 'arm64'] },
         ]
       : [
           { target: 'deb', arch: [localArch] },
