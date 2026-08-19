@@ -607,11 +607,6 @@ jobs:
         with:
           name: "DevSidecar-${{ steps.package-info.outputs.version }}-linux-x86_64.rpm"
           path: release
-      - name: "Download DevSidecar-${{ steps.package-info.outputs.version }}-linux-x86_64.pkg.tar.xz"
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: "DevSidecar-${{ steps.package-info.outputs.version }}-linux-x86_64.pkg.tar.xz"
-          path: release
       #- name: "Download DevSidecar-${{ steps.package-info.outputs.version }}-linux-x86_64.flatpak"
       #  uses: actions/download-artifact@v4.1.8
       #  with:
@@ -637,11 +632,6 @@ jobs:
         uses: actions/download-artifact@v4.1.8
         with:
           name: "DevSidecar-${{ steps.package-info.outputs.version }}-linux-arm64.rpm"
-          path: release
-      - name: "Download DevSidecar-${{ steps.package-info.outputs.version }}-linux-arm64.pkg.tar.xz"
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: "DevSidecar-${{ steps.package-info.outputs.version }}-linux-arm64.pkg.tar.xz"
           path: release
       # -------------------------------------------------------------------------------------------------------------------------
       - name: "Download DevSidecar-${{ steps.package-info.outputs.version }}-linux-armv7l.deb"
