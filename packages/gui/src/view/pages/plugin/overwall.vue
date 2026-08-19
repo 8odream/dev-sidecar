@@ -1,11 +1,14 @@
 <script>
-import Plugin from '../../mixins/plugin'
-import MockInput from '@/view/components/mock-input.vue'
+import { defineComponent } from 'vue';
 
-export default {
+import { PlusOutlined, MinusOutlined, SyncOutlined, CheckOutlined } from '@ant-design/icons-vue'
+import Plugin from '../../mixins/plugin'
+
+export default defineComponent({
   name: 'Overwall',
-  components: { MockInput },
+  components: { PlusOutlined, MinusOutlined, SyncOutlined, CheckOutlined },
   mixins: [Plugin],
+
   data () {
     return {
       key: 'plugin.overwall',
@@ -25,11 +28,38 @@ export default {
       ],
     }
   },
+
+  computed: {
+    serverOptions () {
+      const options = []
+      const defaultServer = this.config?.plugin?.overwall?.serverDefault || {}
+      for (const [domain, cfg] of Object.entries(defaultServer)) {
+        options.push({
+          id: cfg && cfg.id != null ? Number.parseInt(cfg.id, 10) : 0,
+          domain,
+          label: `ID 0（默认） - ${domain}`,
+        })
+      }
+      for (const item of this.servers || []) {
+        if (item.key) {
+          options.push({
+            id: item.id,
+            domain: item.key,
+            label: `ID ${item.id} - ${item.key}`,
+          })
+        }
+      }
+      return options
+    },
+  },
+
   created () {
     console.log('status:', this.status)
   },
+
   mounted () {
   },
+
   methods: {
     async openExternal (url) {
       await this.$api.ipc.openExternal(url)
@@ -40,26 +70,56 @@ export default {
       }
     },
     ready () {
-      this.initTarget()
       this.initServer()
+      this.initTarget()
     },
     async applyBefore () {
       this.submitTarget()
       this.submitServer()
     },
+    preferredServerId () {
+      return this.serverOptions.some((item) => item.id === 1)
+        ? 1
+        : (this.serverOptions.some((item) => item.id === 0) ? 0 : null)
+    },
+    nextServerId () {
+      const ids = (this.servers || []).map((item) => item.id).filter((id) => id != null)
+      return ids.length > 0 ? Math.max(...ids) + 1 : 1
+    },
+    onTargetValueChange (item) {
+      if (item.value === 'true' && (item.serverId == null || item.serverId === '')) {
+        item.serverId = 'default'
+      }
+    },
     initTarget () {
       this.targets = []
-      const targetsMap = this.config.plugin.overwall.targets
+      const targetsMap = this.config.plugin.overwall.targets || {}
       for (const key in targetsMap) {
         const value = targetsMap[key]
-        this.targets.push({
-          key: key || '',
-          value: value === true ? 'true' : 'false',
-        })
+        if (value && typeof value === 'object') {
+          this.targets.push({
+            key: key || '',
+            value: value.enabled === false ? 'false' : 'true',
+            serverId: value.serverId != null ? Number.parseInt(value.serverId, 10) : 'default',
+          })
+        } else if (value === false || value === 'false') {
+          this.targets.push({
+            key: key || '',
+            value: 'false',
+            serverId: 'default',
+          })
+        } else {
+          this.targets.push({
+            key: key || '',
+            value: 'true',
+            serverId: 'default',
+          })
+        }
       }
     },
     addTarget () {
-      this.targets.unshift({ key: '', value: 'true' })
+      this.targets.unshift({ key: '', value: 'true', serverId: 'default' })
+      this.focusFirst(this.$refs.targets)
     },
     deleteTarget (item, index) {
       this.targets.splice(index, 1)
@@ -70,7 +130,16 @@ export default {
         if (item.key) {
           const hostname = this.handleHostname(item.key)
           if (hostname) {
-            map[hostname] = (item.value === 'true')
+            if (item.value === 'true') {
+              // 选择“默认”时不写死服务器，交给中间件动态选择：优先 ID1，否则 ID0
+              if (item.serverId === 'default' || item.serverId == null || item.serverId === '') {
+                map[hostname] = true
+              } else {
+                map[hostname] = { enabled: true, serverId: Number.parseInt(item.serverId, 10) }
+              }
+            } else {
+              map[hostname] = false
+            }
           }
         }
       }
@@ -79,23 +148,37 @@ export default {
 
     initServer () {
       this.servers = []
-      const targetsMap = this.config.plugin.overwall.server
-      for (const key in targetsMap) {
-        const value = targetsMap[key]
+      const serverMap = this.config.plugin.overwall.server || {}
+      for (const key in serverMap) {
+        const value = serverMap[key] || {}
+        const id = value.id != null ? Number.parseInt(value.id, 10) : this.nextServerId()
         this.servers.push({
+          id,
           key,
-          value,
+          value: {
+            type: value.type || 'path',
+            port: value.port,
+            path: value.path,
+            password: value.password,
+          },
         })
       }
       if (this.servers.length === 0) {
-        this.addServer()
+        this.addServer(false)
       }
     },
     deleteServer (item, index) {
       this.servers.splice(index, 1)
     },
-    addServer () {
-      this.servers.unshift({ key: '', value: { type: 'path' } })
+    addServer (needFocus = true) {
+      this.servers.unshift({
+        id: this.nextServerId(),
+        key: '',
+        value: { type: 'path', port: 443, path: '', password: '' },
+      })
+      if (needFocus) {
+        this.focusFirst(this.$refs.servers)
+      }
     },
     submitServer () {
       const map = {}
@@ -103,29 +186,35 @@ export default {
         if (item.key) {
           const hostname = this.handleHostname(item.key)
           if (hostname) {
-            map[hostname] = item.value
+            map[hostname] = {
+              id: item.id != null ? Number.parseInt(item.id, 10) : this.nextServerId(),
+              type: item.value.type || 'path',
+              port: item.value.port,
+              path: item.value.path,
+              password: item.value.password,
+            }
           }
         }
       }
       this.config.plugin.overwall.server = map
     },
   },
-}
+});
 </script>
 
 <template>
   <ds-container>
-    <template slot="header">
+    <template #header>
       梯子
     </template>
-    <template slot="header-right">
+    <template #header-right>
       <a-button type="primary" @click="openExternal('https://github.com/docmirror/dev-sidecar-doc/blob/main/ow.md')">原理说明</a-button>
     </template>
 
     <div v-if="config">
       <a-form layout="horizontal">
         <a-form-item label="梯子" :label-col="labelCol" :wrapper-col="wrapperCol">
-          <a-checkbox v-model="config.plugin.overwall.enabled">
+          <a-checkbox v-model:checked="config.plugin.overwall.enabled">
             启用
           </a-checkbox>
           <div class="form-help">
@@ -136,7 +225,7 @@ export default {
         </a-form-item>
         <hr>
         <a-form-item label="PAC" :label-col="labelCol" :wrapper-col="wrapperCol">
-          <a-checkbox v-model="config.plugin.overwall.pac.enabled">
+          <a-checkbox v-model:checked="config.plugin.overwall.pac.enabled">
             启用PAC
           </a-checkbox>
           <div class="form-help">
@@ -144,7 +233,7 @@ export default {
           </div>
         </a-form-item>
         <a-form-item label="自动更新PAC" :label-col="labelCol" :wrapper-col="wrapperCol">
-          <a-checkbox v-model="config.plugin.overwall.pac.autoUpdate">
+          <a-checkbox v-model:checked="config.plugin.overwall.pac.autoUpdate">
             是否自动更新PAC
           </a-checkbox>
           <div class="form-help">
@@ -153,7 +242,7 @@ export default {
           </div>
         </a-form-item>
         <a-form-item label="远程PAC文件" :label-col="labelCol" :wrapper-col="wrapperCol">
-          <a-input v-model="config.plugin.overwall.pac.pacFileUpdateUrl" :title="config.plugin.overwall.pac.pacFileUpdateUrl" spellcheck="false" />
+          <a-input v-model:value="config.plugin.overwall.pac.pacFileUpdateUrl" :title="config.plugin.overwall.pac.pacFileUpdateUrl" spellcheck="false" />
           <div class="form-help">
             远程PAC文件内容可以是<code>base64</code>编码格式，也可以是未经过编码的
           </div>
@@ -163,25 +252,33 @@ export default {
           <div>
             <a-row :gutter="10" style="">
               <a-col :span="22">
-                <span>PAC没有拦截到的域名，可以在此处定义；配置为<code>禁用</code>时，将不使用梯子</span>
+                <span>PAC没有拦截到的域名，可以在此处定义；配置为<code>启用</code>时，可为该域名选择代理服务器，默认优先使用 <code>ID 1</code>，若 <code>ID 1</code> 不存在则自动使用 <code>ID 0</code>；配置为<code>禁用</code>时，将不使用梯子</span>
               </a-col>
               <a-col :span="2">
-                <a-button type="primary" icon="plus" @click="addTarget()" />
+                <a-button type="primary" @click="addTarget()"><PlusOutlined /></a-button>
               </a-col>
             </a-row>
-            <a-row v-for="(item, index) of targets" :key="index" :gutter="10">
-              <a-col :span="18">
-                <MockInput v-model="item.key" class="mt-2" />
+            <a-row v-for="(item, index) of targets" ref="targets" :key="index" :gutter="10">
+              <a-col :span="12">
+                <a-input v-model:value="item.key" class="mt-2" spellcheck="false" />
               </a-col>
               <a-col :span="4">
-                <a-select v-model="item.value" style="width:100%">
+                <a-select v-model:value="item.value" class="w100" @change="onTargetValueChange(item)">
                   <a-select-option v-for="(item2) of overwallOptions" :key="item2.value" :value="item2.value">
                     {{ item2.label }}
                   </a-select-option>
                 </a-select>
               </a-col>
+              <a-col :span="6">
+                <a-select v-model:value="item.serverId" class="w100" :disabled="item.value !== 'true'">
+                  <a-select-option value="default">默认（优先 ID1，否则 ID0）</a-select-option>
+                  <a-select-option v-for="(server) of serverOptions" :key="server.id" :value="server.id">
+                    {{ server.label }}
+                  </a-select-option>
+                </a-select>
+              </a-col>
               <a-col :span="2">
-                <a-button type="danger" icon="minus" @click="deleteTarget(item, index)" />
+                <a-button type="danger" @click="deleteTarget(item, index)"><MinusOutlined /></a-button>
               </a-col>
             </a-row>
           </div>
@@ -193,27 +290,31 @@ export default {
                 <span>Nginx二层代理服务端配置</span>
               </a-col>
               <a-col :span="2">
-                <a-button type="primary" icon="plus" @click="addServer()" />
+                <a-button type="primary" @click="addServer()"><PlusOutlined /></a-button>
               </a-col>
             </a-row>
-            <a-row v-for="(item, index) of servers" :key="index" :gutter="10">
-              <a-col :span="6">
-                <a-input v-model="item.key" :title="item.key" addon-before="域名" placeholder="yourdomain.com" spellcheck="false" />
+            <a-row v-for="(item, index) of servers" ref="servers" :key="index" :gutter="10">
+              <a-col :span="2">
+                <a-tag color="blue">ID {{ item.id }}</a-tag>
               </a-col>
               <a-col :span="5">
-                <a-input v-model="item.value.port" :title="item.value.port" addon-before="端口" placeholder="443" spellcheck="false" />
-              </a-col>
-              <a-col :span="6">
-                <a-input v-model="item.value.path" :title="item.value.path" addon-before="路径" placeholder="xxxxxx" spellcheck="false" />
+                <a-input v-model:value="item.key" :title="item.key" addon-before="域名" placeholder="yourdomain.com" spellcheck="false" />
               </a-col>
               <a-col :span="5">
-                <a-input v-model="item.value.password" addon-before="密码" type="password" placeholder="password" spellcheck="false" />
+                <a-input v-model:value="item.value.port" :title="item.value.port" addon-before="端口" placeholder="443" spellcheck="false" />
+              </a-col>
+              <a-col :span="5">
+                <a-input v-model:value="item.value.path" :title="item.value.path" addon-before="路径" placeholder="xxxxxx" spellcheck="false" />
+              </a-col>
+              <a-col :span="5">
+                <a-input v-model:value="item.value.password" addon-before="密码" type="password" placeholder="password" spellcheck="false" />
               </a-col>
               <a-col :span="2">
-                <a-button type="danger" icon="minus" @click="deleteServer(item, index)" />
+                <a-button type="danger" @click="deleteServer(item, index)"><MinusOutlined /></a-button>
               </a-col>
             </a-row>
             <div class="form-help">
+              <code>ID 0</code> 为内置默认服务器；在此处新增的服务器 ID 会依次为 <code>1、2、3...</code>。<br>
               您可以在此处配置自己的代理服务器地址。<br>
               警告：请勿使用来源不明的服务器地址，有安全风险！
             </div>
@@ -221,13 +322,13 @@ export default {
         </a-form-item>
       </a-form>
     </div>
-    <template slot="footer">
+    <template #footer>
       <div class="footer-bar">
-        <a-button :loading="resetDefaultLoading" class="mr10" icon="sync" @click="resetDefault()">
-          恢复默认
+        <a-button :loading="resetDefaultLoading" class="mr10" @click="resetDefault()">
+          <SyncOutlined />恢复默认
         </a-button>
-        <a-button :loading="applyLoading" icon="check" type="primary" @click="apply()">
-          应用
+        <a-button :loading="applyLoading" type="primary" @click="apply()">
+          <CheckOutlined />应用
         </a-button>
       </div>
     </template>

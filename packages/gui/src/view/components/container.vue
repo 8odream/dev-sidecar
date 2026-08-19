@@ -1,7 +1,9 @@
 <script>
-export default {
+import { defineComponent } from 'vue'
+
+export default defineComponent({
   name: 'DsContainer',
-}
+})
 </script>
 
 <template>
@@ -52,6 +54,8 @@ export default {
     flex: 1;
     height: 0;
     overflow: auto;
+    // 始终预留滚动条空间，避免子页面切换时滚动条出现/消失导致内容宽度变化、顶部卡片跳动
+    scrollbar-gutter: stable;
     position: relative;
     padding: 15px;
   }

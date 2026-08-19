@@ -1,37 +1,47 @@
 <script>
-export default {
+import { defineComponent } from 'vue';
+
+export default defineComponent({
+  emits: ['update:open', 'setup'],
   name: 'SetupCa',
+
   components: {
 
   },
+
   props: {
     title: {
       type: String,
       default: '安装根证书',
     },
-    visible: {
+    open: {
       type: Boolean,
     },
   },
+
   data () {
     return {
       systemPlatform: '',
     }
   },
+
   computed: {
     setupImage () {
+      const base = process.env.BASE_URL || './'
       if (this.systemPlatform === 'mac') {
-        return '/setup-mac.png'
+        return `${base}setup-mac.png`
       } else if (this.systemPlatform === 'linux') {
-        return '/setup-linux.png'
+        return `${base}setup-linux.png`
       } else {
-        return '/setup.png'
+        return `${base}setup.png`
       }
     },
   },
+
   async created () {
     this.systemPlatform = await this.$api.info.getSystemPlatform()
   },
+
   methods: {
     async openExternal (url) {
       await this.$api.ipc.openExternal(url)
@@ -39,10 +49,10 @@ export default {
     afterVisibleChange (val) {
     },
     showDrawer () {
-      this.$emit('update:visible', true)
+      this.$emit('update:open', true)
     },
     onClose () {
-      this.$emit('update:visible', false)
+      this.$emit('update:open', false)
     },
     async doSetup () {
       this.$emit('setup')
@@ -51,22 +61,21 @@ export default {
       }
     },
   },
-}
+});
 </script>
 
 <template>
   <a-drawer
     placement="right"
     :closable="false"
-    :visible="visible"
-    :after-visible-change="afterVisibleChange"
+    :open="open"
+    @after-open-change="afterVisibleChange"
     width="660px"
     height="100%"
-    :slots="{ title: 'title' }"
     wrap-class-name="json-wrapper"
     @close="onClose"
   >
-    <template slot="title">
+    <template #title>
       {{ title }}
       <a-button type="primary" style="float:right" @click="doSetup()">
         点此去安装

@@ -81,7 +81,8 @@ export default {
       })
     },
     saveConfig () {
-      return this.$api.config.save(this.config).then((ret) => {
+      const configCopy = lodash.cloneDeep(this.config)
+      return this.$api.config.save(configCopy).then((ret) => {
         this.$message.success('设置已保存')
         this.setConfig(ret.allConfig)
         this.printConfig('After saveConfig(), ')
@@ -96,7 +97,7 @@ export default {
       return value
     },
     setConfig (newConfig) {
-      this.$set(this, 'config', newConfig)
+      this.config = newConfig
     },
     printConfig (prefix = '') {
       console.log(`${prefix}${this.key} page config:`, this.config, this.systemPlatform)
@@ -141,6 +142,19 @@ export default {
     async openLog () {
       const dir = await this.$api.info.getLogDir()
       this.$api.ipc.openPath(dir)
+    },
+    async focusFirst (ref) {
+      if (ref && ref.length != null) {
+        setTimeout(() => {
+          if (ref.length > 0) {
+            try {
+              ref[0].$el.querySelector('.ant-input').focus()
+            } catch (e) {
+              console.error('获取输入框焦点失败：', e)
+            }
+          }
+        }, 100)
+      }
     },
     handleHostname (hostname) {
       if (this.isNotHostname(hostname)) {

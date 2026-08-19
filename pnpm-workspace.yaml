@@ -3,3 +3,21 @@ packages:
   - packages/*
   # exclude packages that are inside test directories
   - '!**/test/**'
+
+shamefullyHoist: true
+
+supportedArchitectures:
+  os:
+    - current
+  cpu:
+    - x64
+    - arm64
+    - ia32
+
+allowBuilds:
+  '@parcel/watcher': true
+  core-js: true
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  unrs-resolver: true

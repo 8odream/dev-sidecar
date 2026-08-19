@@ -1,5 +1,6 @@
 <script>
 import lodash from 'lodash'
+import { CheckOutlined, CloseOutlined, ArrowRightOutlined } from '@ant-design/icons-vue'
 import DsContainer from '../components/container'
 import SetupCa from '../components/setup-ca'
 
@@ -8,15 +9,16 @@ export default {
   components: {
     DsContainer,
     SetupCa,
+    CheckOutlined,
+    CloseOutlined,
+    ArrowRightOutlined,
   },
   data () {
     return {
+      publicPath: process.env.BASE_URL || './',
       status: undefined,
       startup: {
         loading: false,
-        type: () => {
-          return (this.status.server && this.status.server.enabled) ? 'primary' : 'default'
-        },
         doClick: () => {
           if (this.status.server.enabled) {
             this.apiCall(this.startup, this.$api.shutdown)
@@ -50,22 +52,56 @@ export default {
       }
       return false
     },
+    _githubStarBadgeUrl () {
+      // 生成每天更新一次的缓存键，减少API调用频率
+      const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+      return `https://img.shields.io/github/stars/docmirror/dev-sidecar?logo=github&cacheSeconds=86400&t=${today}`
+    },
   },
   async created () {
     await this.doCheckRootCa()
     await this.reloadConfig()
-    this.$set(this, 'status', this.$status)
-    this.switchBtns = this.createSwitchBtns()
-    this.$set(this, 'update', this.$global.update)
-    if (!this.update.autoChecked && this.config.app.autoChecked) {
-      this.update.autoChecked = true // 应用启动时，执行一次
-      this.doCheckUpdate(false)
+    this.status = this.$status
+    // setting.json 未开启 overwall 时，梯子开关不显示，同时确保梯子配置不生效
+    if (!this.setting.overwall && this.config?.plugin?.overwall?.enabled) {
+      this.config.plugin.overwall.enabled = false
+      const saveRet = await this.$api.config.save(lodash.cloneDeep(this.config))
+      this.config = saveRet.allConfig
+      if (this.status.server?.enabled) {
+        await this.$api.server.restart()
+      }
     }
+    this.switchBtns = this.createSwitchBtns()
+    // 合并全局更新参数到 data() 中的默认值，避免 $global.update 尚未
+    // 初始化时（update/front.js 在 mount 之后才执行）覆盖为 undefined
+    if (this.$global.update) {
+      Object.assign(this.update, this.$global.update)
+    }
+    // 自动检查更新 延后到 mounted 中处理（等待代理服务启动后再执行）
     this.$api.info.get().then((ret) => {
       this.info = ret
     })
   },
   mounted () {
+    // 自动检查更新：等待代理服务启动后再执行，避免代理未就绪时
+    // 直接请求 GitHub API 导致超时或失败
+    const tryAutoCheck = () => {
+      if (!this.config || !this.update) return
+      if (this.update.autoChecked) return
+      if (!this.config.app.autoChecked) return
+      this.update.autoChecked = true
+      this.$watch('status.server.enabled', (enabled) => {
+        if (enabled) {
+          this.doCheckUpdate(false)
+        }
+      }, { immediate: true })
+    }
+    // mounted 时 config 可能尚未加载完毕（created 是 async 的），
+    // 先试一次，不行就等 config 就绪后再试
+    tryAutoCheck()
+    if (!this.config) {
+      this.$watch('config', () => { tryAutoCheck() }, { immediate: true })
+    }
   },
   methods: {
     async modeChange (event) {
@@ -81,28 +117,20 @@ export default {
       } else if (mode === 'ow') {
         console.log('event', event)
         if (!this.setting.overwall) {
-          this.wantOW()
           return
         }
         this.config.server.intercept.enabled = true
-        this.config.server.dns.speedTest.enabled = true
-        this.config.plugin.overwall.enabled = true
       }
-      this.$api.config.save(this.config).then(() => {
-        this.$message.success('设置已保存')
-      })
-      if (this.status.server.enabled) {
+      const configCopy = lodash.cloneDeep(this.config)
+      await this.$api.config.save(configCopy)
+      if (this.status.server && this.status.server.enabled) {
         return this.$api.server.restart()
       }
     },
     wantOW () {
       this.$success({
         title: '彩蛋（增强模式）',
-        content: (
-          <div>
-            我把它藏在了源码里，感兴趣的话可以找一找它（线索提示 // TODO）
-          </div>
-        ),
+        content: h => h('div', null, '我把它藏在了源码里，感兴趣的话可以找一找它（线索提示 // TODO）'),
       })
     },
     async doCheckRootCa () {
@@ -143,8 +171,20 @@ export default {
       return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`
     },
     async handleCaSetuped () {
-      console.log('this.config.server.setting.rootCaFile.certPath', this.config.server.setting.rootCaFile.certPath)
-      await this.$api.shell.setupCa({ certPath: this.config.server.setting.rootCaFile.certPath })
+      const certPath = this.config?.server?.setting?.rootCaFile?.certPath
+      console.log('certPath:', certPath)
+      if (!certPath) {
+        this.$message.error('证书路径未配置，请先启动代理服务生成 CA 根证书后再试')
+        return
+      }
+      // 获取系统平台类型：Linux 用 shell.setupCa 复制证书，
+      // Windows/macOS 用 Electron 主进程 shell.openPath 避免 cmd.exe 权限问题
+      const platform = await this.$api.info.getSystemPlatform()
+      if (platform === 'linux') {
+        await this.$api.shell.setupCa({ certPath })
+      } else {
+        await this.$api.shell.openPath(certPath)
+      }
       this.setting.rootCa = this.setting.rootCa || {}
       const rootCa = this.setting.rootCa
 
@@ -157,8 +197,7 @@ export default {
       // 删除noTip数据
       // delete rootCa.noTip
 
-      this.$set(this, 'setting', this.setting)
-      this.$api.setting.save(this.setting)
+      this.$api.setting.save(JSON.parse(JSON.stringify(this.setting)))
     },
     reloadConfig () {
       return this.$api.config.reload().then((ret) => {
@@ -173,19 +212,25 @@ export default {
       btns.server = this.createSwitchBtn('server', '代理服务', this.$api.server, status)
       btns.proxy = this.createSwitchBtn('proxy', '系统代理', this.$api.proxy, status)
       lodash.forEach(status.plugin, (item, key) => {
+        // setting.json 未开启 overwall 时，首页不显示“梯子”开关
+        if (key === 'overwall' && !this.setting.overwall) {
+          return
+        }
         if (this.config.plugin[key].statusOff) {
           return
         }
-        btns[key] = this.createSwitchBtn(key, this.config.plugin[key].name, this.$api.plugin[key], status.plugin, this.config.plugin[key].tip)
+        btns[key] = this.createSwitchBtn(key, this.config.plugin[key].name, this.$api.plugin[key], status.plugin, this.config.plugin[key].tip, this.config.plugin[key])
       })
       return btns
     },
-    createSwitchBtn (key, label, apiTarget, statusParent, tip) {
+    createSwitchBtn (key, label, apiTarget, statusParent, tip, pluginConfig) {
       return {
         loading: false,
         key,
         label,
         tip,
+        isPlugin: pluginConfig != null,
+        restartServer: pluginConfig != null && pluginConfig.restartServer === true,
         status: () => {
           return statusParent[key].enabled
         },
@@ -208,12 +253,25 @@ export default {
       }
     },
 
-    onSwitchClick (btn, openApi, closeApi, checked) {
-      if (checked) {
-        return this.apiCall(btn, openApi)
-      } else {
-        return this.apiCall(btn, closeApi)
+    async onSwitchClick (btn, openApi, closeApi, checked) {
+      const ret = checked
+        ? await this.apiCall(btn, openApi)
+        : await this.apiCall(btn, closeApi)
+
+      // 插件快捷开关需要持久化 enabled 状态，并与对应设置页保持同步
+      if (btn.isPlugin) {
+        try {
+          this.config.plugin[btn.key].enabled = checked
+          const saveRet = await this.$api.config.save(lodash.cloneDeep(this.config))
+          this.config = saveRet.allConfig
+          if (btn.restartServer && this.status.server && this.status.server.enabled) {
+            await this.$api.server.restart()
+          }
+        } catch (e) {
+          console.error('保存插件开关状态失败:', e)
+        }
       }
+      return ret
     },
     onServerClick (checked) {
       return this.onSwitchClick(this.server, this.$api.server.start, this.$api.server.close, checked)
@@ -257,10 +315,10 @@ export default {
 
 <template>
   <DsContainer class="page_index">
-    <template slot="header">
+    <template #header>
       给开发者的辅助工具
     </template>
-    <template slot="header-right">
+    <template #header-right>
       <a-button style="margin-right:10px" @click="openSetupCa">
         <a-badge :count="_rootCaSetuped ? 0 : 1" dot>安装根证书</a-badge>
       </a-button>
@@ -278,7 +336,7 @@ export default {
     <div class="box">
       <a-alert v-if="config && config.app.showShutdownTip" message="本应用开启后会修改系统代理，直接重启电脑可能会无法上网，您可以再次启动本应用即可恢复。如您需要卸载，在卸载前请务必完全退出本应用再进行卸载" banner closable @close="onShutdownTipClose" />
       <div v-if="config && config.app" class="mode-bar" style="margin:20px;">
-        <a-radio-group v-model="config.app.mode" button-style="solid" @change="modeChange">
+        <a-radio-group v-model:value="config.app.mode" button-style="solid" @change="modeChange">
           <a-tooltip placement="topLeft" title="启用测速，关闭拦截，关闭增强（不稳定，不需要安装证书，最安全）">
             <a-radio-button value="safe">
               安全模式
@@ -304,29 +362,36 @@ export default {
 
       <div
         v-if="status"
-        style="margin-top:20px;display: flex; align-items:center;justify-content:space-around;flex-direction: row"
+        class="main-control-panel"
       >
-        <div style="text-align: center">
-          <div class="big_button">
-            <a-button shape="circle" :type="startup.type()" :loading="startup.loading" @click="startup.doClick">
-              <img v-if="!startup.loading && !status.server.enabled" width="50" src="/logo/logo-simple.svg">
-              <img v-if="!startup.loading && status.server.enabled" width="50" src="/logo/logo-fff.svg">
+        <div class="main-switch-wrapper">
+          <div class="big-button">
+            <a-button
+              shape="circle"
+              :class="{ 'is-active': status.server.enabled }"
+              :loading="startup.loading"
+              @click="startup.doClick"
+            >
+              <img v-if="!startup.loading && !status.server.enabled" width="50" :src="`${publicPath}logo/logo-simple.svg`">
+              <img v-if="!startup.loading && status.server.enabled" width="50" :src="`${publicPath}logo/logo-fff.svg`">
             </a-button>
-            <div class="mt10">
+            <div class="switch-status-label" :class="{ 'is-active': status.server.enabled }">
               {{ status.server.enabled ? '已开启' : '已关闭' }}
             </div>
           </div>
         </div>
-        <div :span="12">
-          <a-form style="margin-top:20px" :label-col="{ span: 15 }" :wrapper-col="{ span: 9 }">
+        <div class="sub-switches-wrapper">
+          <a-form :label-col="{ span: 15 }" :wrapper-col="{ span: 9 }">
             <a-form-item v-for="(item, key) in switchBtns" :key="key" :label="item.label">
-              <a-tooltip placement="topLeft">
+              <a-tooltip placement="topLeft" :title="item.tip">
                 <a-switch
-                  style="margin-left:10px" :loading="item.loading" :checked="item.status()" default-checked
+                  class="sub-switch"
+                  :loading="item.loading"
+                  :checked="item.status()"
                   @change="item.doClick"
                 >
-                  <a-icon slot="checkedChildren" type="check" />
-                  <a-icon slot="unCheckedChildren" type="close" />
+                  <template #checkedChildren><CheckOutlined /></template>
+                  <template #unCheckedChildren><CloseOutlined /></template>
                 </a-switch>
               </a-tooltip>
             </a-form-item>
@@ -335,8 +400,8 @@ export default {
       </div>
     </div>
 
-    <SetupCa title="安装证书" :visible.sync="setupCa.visible" @setup="handleCaSetuped" />
-    <div slot="footer">
+    <SetupCa title="安装证书" v-model:open="setupCa.visible" @setup="handleCaSetuped" />
+    <template #footer>
       <div v-if="!setting.overwall" class="star">
         <div class="donate">
           <a-tooltip placement="topLeft" title="彩蛋，点我">
@@ -350,15 +415,15 @@ export default {
         <div class="right">
           <div>
             如果它解决了你的问题，请不要吝啬你的star哟！点这里
-            <a-icon style="margin-right:10px;" type="arrow-right" theme="outlined" />
+            <ArrowRightOutlined style="margin-right:10px;" />
           </div>
           <a @click="openExternal('https://github.com/docmirror/dev-sidecar')"><img
             alt="GitHub stars"
-            src="https://img.shields.io/github/stars/docmirror/dev-sidecar?logo=github"
+            :src="_githubStarBadgeUrl"
           ></a>
         </div>
       </div>
-    </div>
+    </template>
   </DsContainer>
 </template>
 
@@ -397,6 +462,78 @@ export default {
       }
     }
   }
+
+  /* 主控制面板 */
+  .main-control-panel {
+    margin-top: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    flex-direction: row;
+  }
+
+  /* 主开关区域 */
+  .main-switch-wrapper {
+    text-align: center;
+
+    .big-button {
+      > button {
+        width: 100px;
+        height: 100px;
+        border-radius: 100px;
+        transition: all 0.3s ease;
+        border: 2px solid var(--btn-border);
+        background-color: var(--btn-bg);
+
+        &:hover {
+          border-color: var(--accent-hover);
+          box-shadow: 0 0 8px var(--accent-shadow);
+        }
+
+        /* 激活状态 */
+        &.is-active {
+          background-color: var(--accent-color);
+          border-color: var(--accent-color);
+          box-shadow: 0 0 12px var(--accent-shadow);
+
+          &:hover {
+            background-color: var(--accent-hover);
+            border-color: var(--accent-hover);
+          }
+        }
+      }
+
+      > button i {
+        font-size: 40px;
+      }
+    }
+
+    .switch-status-label {
+      margin-top: 10px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: color 0.3s ease;
+
+      &.is-active {
+        color: var(--accent-color);
+        font-weight: 600;
+      }
+    }
+  }
+
+  /* 子开关区域 */
+  .sub-switches-wrapper {
+    margin-top: 20px;
+
+    .sub-switch {
+      margin-left: 10px;
+
+      &.ant-switch-checked {
+        background-color: #1890ff;
+      }
+    }
+  }
 }
 
 .payQrcode {
@@ -405,17 +542,12 @@ export default {
   justify-content: space-evenly;
 }
 
-.big_button > button {
-  width: 100px;
-  height: 100px;
-  border-radius: 100px;
-}
-
-.big_button > button i {
-  size: 40px;
-}
-
 div.ant-form-item {
   margin-bottom: 9px;
+}
+
+/* 表单标签固定宽度，防止不同长度文字导致按钮错位 */
+.page_index .ant-form-item-label {
+  flex: 0 0 100px !important;
 }
 </style>

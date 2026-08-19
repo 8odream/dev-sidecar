@@ -1,16 +1,27 @@
 <script>
-import _ from 'lodash'
-import VueJsonEditor from 'vue-json-editor-fix-cn'
-import Plugin from '../mixins/plugin'
-import MockInput from '@/view/components/mock-input.vue'
+import { defineComponent } from 'vue';
 
-export default {
+import _ from 'lodash'
+import JsonEditor from '@/view/components/JsonEditor.vue'
+import { CheckOutlined, CloudOutlined, InfoCircleOutlined, PlusOutlined, MinusOutlined, SyncOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import Plugin from '../mixins/plugin'
+
+export default defineComponent({
   name: 'Server',
+
   components: {
-    VueJsonEditor,
-    MockInput,
+    JsonEditor,
+    CheckOutlined,
+    CloudOutlined,
+    InfoCircleOutlined,
+    PlusOutlined,
+    MinusOutlined,
+    SyncOutlined,
+    ReloadOutlined,
   },
+
   mixins: [Plugin],
+
   data () {
     return {
       key: 'server',
@@ -18,6 +29,29 @@ export default {
       dnsMappings: [],
       speedTestList: [],
       whiteList: [],
+      tlsMappings: [],
+      speedRefreshInterval: null,
+      tlsVersionOptions: [
+        {
+          label: 'TLS 1.2',
+          value: 'TLSv1.2',
+        },
+        {
+          label: 'TLS 1.3',
+          value: 'TLSv1.3',
+        },
+      ],
+      cfRouteDomains: [],
+      cfRouteModeOptions: [
+        {
+          label: '黑名单模式（名单内不重定向）',
+          value: 'blacklist',
+        },
+        {
+          label: '白名单模式（仅名单内重定向）',
+          value: 'whitelist',
+        },
+      ],
       whiteListOptions: [
         {
           label: '不代理',
@@ -28,8 +62,19 @@ export default {
           value: 'false',
         },
       ],
+      familyOptions: [
+        {
+          label: 'IPv4',
+          value: '4',
+        },
+        {
+          label: 'IPv6',
+          value: '6',
+        },
+      ],
     }
   },
+
   computed: {
     speedDnsOptions () {
       const options = []
@@ -45,11 +90,22 @@ export default {
       return options
     },
   },
+
   created () {
   },
+
   mounted () {
     this.registerSpeedTestEvent()
   },
+
+  beforeUnmount () {
+    // 清理事件监听器
+    this.$api.ipc.removeAllListeners('speed')
+    if (this.speedRefreshInterval) {
+      clearInterval(this.speedRefreshInterval)
+    }
+  },
+
   methods: {
     async onCrtSelect () {
       const value = await this.$api.fileSelector.open(this.config.server.setting.rootCaFile.certPath, 'file')
@@ -66,6 +122,8 @@ export default {
     ready () {
       this.initDnsMapping()
       this.initWhiteList()
+      this.initTlsMappings()
+      this.initCfRouteDomains()
       if (this.config.server.dns.speedTest.dnsProviders) {
         this.speedDns = this.config.server.dns.speedTest.dnsProviders
       }
@@ -73,6 +131,8 @@ export default {
     async applyBefore () {
       this.submitDnsMappings()
       this.submitWhiteList()
+      this.submitTlsMappings()
+      this.submitCfRouteDomains()
       this.delEmptySpeedHostname()
     },
     async applyAfter () {
@@ -83,31 +143,48 @@ export default {
     // dnsMapping
     initDnsMapping () {
       this.dnsMappings = []
+      const familyMapping = this.config.server.dns.familyMapping || {}
       for (const key in this.config.server.dns.mapping) {
         const value = this.config.server.dns.mapping[key]
         this.dnsMappings.push({
           key,
           value,
+          family: `${familyMapping[key] || '4'}`, // 转成字符串
         })
       }
     },
     submitDnsMappings () {
       const dnsMapping = {}
+      const familyMapping = {}
       for (const item of this.dnsMappings) {
         if (item.key) {
           const hostname = this.handleHostname(item.key)
           if (hostname) {
             dnsMapping[hostname] = item.value
+            if (item.family === '6' || (this.config.server.dns.familyMapping != null && this.config.server.dns.familyMapping[hostname] != null)) {
+              familyMapping[hostname] = item.family
+            }
           }
         }
       }
       this.config.server.dns.mapping = dnsMapping
+      this.config.server.dns.familyMapping = familyMapping
     },
     deleteDnsMapping (item, index) {
       this.dnsMappings.splice(index, 1)
     },
     addDnsMapping () {
-      this.dnsMappings.unshift({ key: '', value: 'quad9' })
+      let defaultDns
+      const dnsArr = ['quad9', 'safe360', 'aliyun']
+      for (const dnsName of dnsArr) {
+        if (this.config.server.dns.providers[dnsName]) {
+          defaultDns = dnsName
+          break
+        }
+      }
+
+      this.dnsMappings.unshift({ key: '', value: defaultDns, family: '4' })
+      this.focusFirst(this.$refs.dnsMappings)
     },
 
     // whiteList
@@ -123,6 +200,7 @@ export default {
     },
     addWhiteList () {
       this.whiteList.unshift({ key: '', value: 'true' })
+      this.focusFirst(this.$refs.whiteList)
     },
     deleteWhiteList (item, index) {
       this.whiteList.splice(index, 1)
@@ -139,11 +217,96 @@ export default {
       }
       this.config.server.whiteList = whiteList
     },
+
+    // TLS版本设置
+    initTlsMappings () {
+      this.tlsMappings = []
+      const tlsVersionMapping = this.config.server.setting.tlsVersionMapping || {}
+      for (const key in tlsVersionMapping) {
+        const conf = tlsVersionMapping[key]
+        if (typeof conf === 'string') {
+          this.tlsMappings.push({
+            key: key || '',
+            value: conf === 'TLSv1.3' ? 'TLSv1.3' : 'TLSv1.2',
+            enabled: true,
+          })
+        } else if (conf && typeof conf === 'object') {
+          this.tlsMappings.push({
+            key: key || '',
+            value: conf.version === 'TLSv1.3' ? 'TLSv1.3' : 'TLSv1.2',
+            enabled: conf.enabled !== false,
+          })
+        }
+      }
+    },
+    addTlsMapping () {
+      this.tlsMappings.unshift({ key: '', value: 'TLSv1.2', enabled: true })
+      this.focusFirst(this.$refs.tlsMappings)
+    },
+    deleteTlsMapping (item, index) {
+      this.tlsMappings.splice(index, 1)
+    },
+    submitTlsMappings () {
+      const tlsVersionMapping = {}
+      for (const item of this.tlsMappings) {
+        if (item.key) {
+          const hostname = this.handleHostname(item.key)
+          if (hostname) {
+            tlsVersionMapping[hostname] = {
+              enabled: item.enabled !== false,
+              version: item.value === 'TLSv1.3' ? 'TLSv1.3' : 'TLSv1.2',
+            }
+          }
+        }
+      }
+      this.config.server.setting.tlsVersionMapping = tlsVersionMapping
+    },
+
+    // Cloudflare 路由重定向
+    initCfRouteDomains () {
+      this.cfRouteDomains = []
+      const cfRoute = this.config.server.cloudflareRoute || (this.config.server.cloudflareRoute = {})
+      if (!cfRoute.mode) {
+        cfRoute.mode = 'blacklist'
+      }
+      if (!cfRoute.domains) {
+        cfRoute.domains = {}
+      }
+      for (const key in cfRoute.domains) {
+        if (cfRoute.domains[key]) {
+          this.cfRouteDomains.push({ key: key || '' })
+        }
+      }
+    },
+    addCfRouteDomain () {
+      this.cfRouteDomains.unshift({ key: '' })
+      this.focusFirst(this.$refs.cfRouteDomains)
+    },
+    deleteCfRouteDomain (item, index) {
+      this.cfRouteDomains.splice(index, 1)
+    },
+    submitCfRouteDomains () {
+      const cfRoute = this.config.server.cloudflareRoute || (this.config.server.cloudflareRoute = {})
+      const domains = {}
+      for (const item of this.cfRouteDomains) {
+        if (item.key) {
+          const hostname = this.handleHostname(item.key)
+          if (hostname) {
+            domains[hostname] = true
+          }
+        }
+      }
+      cfRoute.domains = domains
+      if (!cfRoute.mode || (cfRoute.mode !== 'whitelist' && cfRoute.mode !== 'blacklist')) {
+        cfRoute.mode = 'blacklist'
+      }
+    },
     getSpeedTestConfig () {
       return this.config.server.dns.speedTest
     },
     addSpeedHostname () {
       this.getSpeedTestConfig().hostnameList.unshift('')
+      this.focusFirst(this.$refs.hostnameList)
     },
     delSpeedHostname (item, index) {
       this.getSpeedTestConfig().hostnameList.splice(index, 1)
@@ -158,6 +321,13 @@ export default {
     },
     reSpeedTest () {
       this.$api.server.reSpeedTest()
+    },
+    hasCf (item) {
+      if (!item) {
+        return false
+      }
+      const list = (item.alive || []).concat(item.backupList || [])
+      return list.some((element) => element.cf === true)
     },
     registerSpeedTestEvent () {
       const listener = async (event, message) => {
@@ -190,13 +360,8 @@ export default {
         }
       }
       this.$api.ipc.on('speed', listener)
-      const interval = this.startSpeedRefreshInterval()
+      this.speedRefreshInterval = this.startSpeedRefreshInterval()
       this.reloadAllSpeedTester()
-
-      this.$once('hook:beforeDestroy', () => {
-        clearInterval(interval)
-        this.$api.ipc.removeAllListeners('speed')
-      })
     },
     async reloadAllSpeedTester () {
       this.$api.server.getSpeedTestList()
@@ -217,12 +382,12 @@ export default {
       }
     },
   },
-}
+});
 </script>
 
 <template>
   <ds-container>
-    <template slot="header">
+    <template #header>
       加速服务设置
     </template>
 
@@ -237,7 +402,7 @@ export default {
         <a-tab-pane key="1" tab="基本设置">
           <div v-if="activeTabKey === '1'" style="padding-right:10px">
             <a-form-item label="代理服务:" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-checkbox v-model="config.server.enabled">
+              <a-checkbox v-model:checked="config.server.enabled">
                 随应用启动
               </a-checkbox>
               <a-tag v-if="status.server.enabled" color="green">
@@ -248,20 +413,20 @@ export default {
               </a-tag>
             </a-form-item>
             <a-form-item label="绑定IP" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-input v-model="config.server.host" spellcheck="false" />
+              <a-input v-model:value="config.server.host" spellcheck="false" />
               <div class="form-help">
                 你可以设置为<code>0.0.0.0</code>，让其他电脑可以使用此代理服务
               </div>
             </a-form-item>
             <a-form-item label="代理端口" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-input-number v-model="config.server.port" :min="0" :max="65535" :precision="0" spellcheck="false" />
+              <a-input-number v-model:value="config.server.port" :min="0" :max="65535" :precision="0" spellcheck="false" />
               <div class="form-help">
                 修改后需要重启应用
               </div>
             </a-form-item>
             <hr>
             <a-form-item label="全局校验SSL" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-checkbox v-model="config.server.setting.NODE_TLS_REJECT_UNAUTHORIZED">
+              <a-checkbox v-model:checked="config.server.setting.NODE_TLS_REJECT_UNAUTHORIZED">
                 NODE_TLS_REJECT_UNAUTHORIZED
               </a-checkbox>
               <div class="form-help">
@@ -269,28 +434,36 @@ export default {
               </div>
             </a-form-item>
             <a-form-item label="代理校验SSL" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-checkbox v-model="config.server.setting.verifySsl">
+              <a-checkbox v-model:checked="config.server.setting.verifySsl">
                 校验加速目标网站的ssl证书
               </a-checkbox>
               <div class="form-help">
                 如果目标网站证书有问题，但你想强行访问，可以临时关闭此项
               </div>
             </a-form-item>
+            <a-form-item label="允许TLS1.2" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-checkbox v-model:checked="config.server.setting.allowTls12">
+                允许使用TLS1.2访问目标网站
+              </a-checkbox>
+              <div class="form-help">
+                ⚠️ 警告：启用后会允许降级到TLS1.2，TLS1.2会泄露目标网站证书，从而暴露访问网站足迹；在网络受到严重监控的环境下有高度隐私风险，除非必须兼容旧站点请勿开启。
+              </div>
+            </a-form-item>
             <a-form-item label="根证书" :label-col="labelCol" :wrapper-col="wrapperCol">
               <a-input-search
-                v-model="config.server.setting.rootCaFile.certPath" addon-before="Cert" enter-button="选择"
+                v-model:value="config.server.setting.rootCaFile.certPath" addon-before="Cert" enter-button="选择"
                 :title="config.server.setting.rootCaFile.certPath" spellcheck="false"
                 @search="onCrtSelect"
               />
               <a-input-search
-                v-model="config.server.setting.rootCaFile.keyPath" addon-before="Key" enter-button="选择"
+                v-model:value="config.server.setting.rootCaFile.keyPath" addon-before="Key" enter-button="选择"
                 :title="config.server.setting.rootCaFile.keyPath" spellcheck="false"
                 @search="onKeySelect"
               />
             </a-form-item>
             <hr>
             <a-form-item label="启用拦截" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-checkbox v-model="config.server.intercept.enabled">
+              <a-checkbox v-model:checked="config.server.intercept.enabled">
                 启用拦截
               </a-checkbox>
               <div class="form-help">
@@ -298,7 +471,7 @@ export default {
               </div>
             </a-form-item>
             <a-form-item label="启用脚本" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-checkbox v-model="config.server.setting.script.enabled">
+              <a-checkbox v-model:checked="config.server.setting.script.enabled">
                 允许插入并运行脚本
               </a-checkbox>
               <div class="form-help">
@@ -309,7 +482,7 @@ export default {
         </a-tab-pane>
         <a-tab-pane key="2" tab="拦截设置">
           <div v-if="activeTabKey === '2'" style="height:100%">
-            <VueJsonEditor
+            <JsonEditor
               v-model="config.server.intercepts" style="height:100%" mode="code"
               :show-btns="false" :expanded-on-start="true"
             />
@@ -318,40 +491,73 @@ export default {
         <a-tab-pane key="3" tab="超时时间设置">
           <div v-if="activeTabKey === '3'" style="height:100%;display:flex;flex-direction:column">
             <a-form-item label="默认超时时间" :label-col="labelCol" :wrapper-col="wrapperCol">
-              请求：<a-input-number v-model="config.server.setting.defaultTimeout" :step="1000" :min="1000" :precision="0" spellcheck="false" /> ms，对应<code>timeout</code>配置<br>
-              连接：<a-input-number v-model="config.server.setting.defaultKeepAliveTimeout" :step="1000" :min="1000" :precision="0" spellcheck="false" /> ms，对应<code>keepAliveTimeout</code>配置
+              请求：<a-input-number v-model:value="config.server.setting.defaultTimeout" :step="1000" :min="1000" :precision="0" spellcheck="false" /> ms，对应<code>timeout</code>配置<br>
+              连接：<a-input-number v-model:value="config.server.setting.defaultKeepAliveTimeout" :step="1000" :min="1000" :precision="0" spellcheck="false" /> ms，对应<code>keepAliveTimeout</code>配置
             </a-form-item>
             <hr style="margin-bottom:15px">
             <div>这里指定域名的超时时间：<span class="form-help">（域名配置可使用通配符或正则）</span></div>
-            <VueJsonEditor
+            <JsonEditor
               v-model="config.server.setting.timeoutMapping" style="flex-grow:1;min-height:300px;margin-top:10px" mode="code"
               :show-btns="false" :expanded-on-start="true"
             />
+          </div>
+        </a-tab-pane>
+        <a-tab-pane key="tls" tab="TLS版本设置">
+          <div v-if="activeTabKey === 'tls'">
+            <a-row style="margin-top:10px">
+              <a-col span="21">
+                <div>指定域名使用的 TLS 版本：<span class="form-help">（域名配置可使用通配符或正则）</span></div>
+                <div class="form-help">
+                  例如 <code>production.cloudflare.docker.com</code> 选择 <code>TLS 1.2</code>。每行右侧开关可单独启用/停用；远程下发的规则会显示为停用状态，由你自行启用。未匹配到或停用的域名遵循“允许TLS1.2”开关。
+                </div>
+              </a-col>
+              <a-col span="3">
+                <a-button style="margin-left:8px" type="primary" @click="addTlsMapping()"><PlusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <a-row v-for="(item, index) of tlsMappings" ref="tlsMappings" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="13">
+                <a-input v-model:value="item.key" spellcheck="false" placeholder="例如 production.cloudflare.docker.com" />
+              </a-col>
+              <a-col :span="5">
+                <a-select v-model:value="item.value" class="w100">
+                  <a-select-option v-for="(item2) of tlsVersionOptions" :key="item2.value" :value="item2.value">
+                    {{ item2.label }}
+                  </a-select-option>
+                </a-select>
+              </a-col>
+              <a-col :span="3">
+                <a-switch v-model:checked="item.enabled" />
+              </a-col>
+              <a-col :span="3">
+                <a-button type="danger" @click="deleteTlsMapping(item, index)"><MinusOutlined /></a-button>
+              </a-col>
+            </a-row>
           </div>
         </a-tab-pane>
         <a-tab-pane key="4" tab="域名白名单">
           <div v-if="activeTabKey === '4'">
             <a-row style="margin-top:10px">
               <a-col span="21">
-                <div>这里配置的域名不会通过代理</div>
+                <div>配置为<code>不代理</code>的域名不会通过代理</div>
               </a-col>
               <a-col span="3">
-                <a-button style="margin-left:8px" type="primary" icon="plus" @click="addWhiteList()" />
+                <a-button style="margin-left:8px" type="primary" @click="addWhiteList()"><PlusOutlined /></a-button>
               </a-col>
             </a-row>
-            <a-row v-for="(item, index) of whiteList" :key="index" :gutter="10" style="margin-top: 5px">
+            <a-row v-for="(item, index) of whiteList" ref="whiteList" :key="index" :gutter="10" style="margin-top: 5px">
               <a-col :span="16">
-                <MockInput v-model="item.key" />
+                <a-input v-model:value="item.key" spellcheck="false" />
               </a-col>
               <a-col :span="5">
-                <a-select v-model="item.value" style="width:100%">
+                <a-select v-model:value="item.value" class="w100">
                   <a-select-option v-for="(item2) of whiteListOptions" :key="item2.value" :value="item2.value">
                     {{ item2.label }}
                   </a-select-option>
                 </a-select>
               </a-col>
               <a-col :span="3">
-                <a-button type="danger" icon="minus" @click="deleteWhiteList(item, index)" />
+                <a-button type="danger" @click="deleteWhiteList(item, index)"><MinusOutlined /></a-button>
               </a-col>
             </a-row>
           </div>
@@ -361,7 +567,7 @@ export default {
             <div>
               说明：<code>自动兼容程序</code>会自动根据错误信息进行兼容性调整，并将兼容设置保存在 <code>~/.dev-sidecar/automaticCompatibleConfig.json</code> 文件中。但并不是所有的兼容设置都是正确的，所以需要通过以下配置来覆盖错误的兼容设置。
             </div>
-            <VueJsonEditor
+            <JsonEditor
               v-model="config.server.compatible" style="flex-grow:1;min-height:300px;margin-top:10px;" mode="code"
               :show-btns="false" :expanded-on-start="true"
             />
@@ -373,7 +579,7 @@ export default {
               提示：<code>IP预设置</code>功能，优先级高于 <code>DNS设置</code>
               <span class="form-help">（域名配置可使用通配符或正则）</span>
             </div>
-            <VueJsonEditor
+            <JsonEditor
               v-model="config.server.preSetIpList" style="flex-grow:1;min-height:300px;margin-top:10px;" mode="code"
               :show-btns="false" :expanded-on-start="true"
             />
@@ -381,7 +587,7 @@ export default {
         </a-tab-pane>
         <a-tab-pane key="7" tab="DNS服务管理">
           <div v-if="activeTabKey === '7'" style="height:100%">
-            <VueJsonEditor
+            <JsonEditor
               v-model="config.server.dns.providers" style="height:100%" mode="code"
               :show-btns="false" :expanded-on-start="true"
             />
@@ -394,22 +600,29 @@ export default {
                 <div>这里配置哪些域名需要通过国外DNS服务器获取IP进行访问</div>
               </a-col>
               <a-col span="3">
-                <a-button style="margin-left:8px" type="primary" icon="plus" @click="addDnsMapping()" />
+                <a-button style="margin-left:8px" type="primary" @click="addDnsMapping()"><PlusOutlined /></a-button>
               </a-col>
             </a-row>
-            <a-row v-for="(item, index) of dnsMappings" :key="index" :gutter="10" style="margin-top: 5px">
-              <a-col :span="15">
-                <MockInput v-model="item.key" />
+            <a-row v-for="(item, index) of dnsMappings" ref="dnsMappings" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="11">
+                <a-input v-model:value="item.key" spellcheck="false" />
               </a-col>
               <a-col :span="6">
-                <a-select v-model="item.value" :disabled="item.value === false" style="width: 100%">
-                  <a-select-option v-for="(item) of speedDnsOptions" :key="item.value" :value="item.value">
-                    {{ item.value }}
+                <a-select v-model:value="item.value" :disabled="item.value === false" class="w100">
+                  <a-select-option v-for="(item2) of speedDnsOptions" :key="item2.value" :value="item2.value">
+                    {{ item2.value }}
+                  </a-select-option>
+                </a-select>
+              </a-col>
+              <a-col :span="4">
+                <a-select v-model:value="item.family" class="w100">
+                  <a-select-option v-for="(item2) of familyOptions" :key="item2.value" :value="item2.value">
+                    {{ item2.label }}
                   </a-select-option>
                 </a-select>
               </a-col>
               <a-col :span="3">
-                <a-button type="danger" icon="minus" @click="deleteDnsMapping(item, index)" />
+                <a-button type="danger" @click="deleteDnsMapping(item, index)"><MinusOutlined /></a-button>
               </a-col>
             </a-row>
           </div>
@@ -418,21 +631,21 @@ export default {
           <div v-if="activeTabKey === '9'" class="ip-tester" style="padding-right: 10px">
             <a-alert type="info" message="对从DNS获取到的IP进行测速，使用速度最快的IP进行访问（注意：对使用了增强功能的域名没啥用）" />
             <a-form-item label="开启DNS测速" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-checkbox v-model="getSpeedTestConfig().enabled">
+              <a-checkbox v-model:checked="getSpeedTestConfig().enabled">
                 启用
               </a-checkbox>
             </a-form-item>
             <a-form-item label="自动测试间隔" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-input-number v-model="getSpeedTestConfig().interval" :step="1000" :min="1" :precision="0" spellcheck="false" /> ms
+              <a-input-number v-model:value="getSpeedTestConfig().interval" :step="1000" :min="1" :precision="0" spellcheck="false" /> ms
             </a-form-item>
             <!-- <a-form-item label="慢速IP阈值" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-input-number v-model="config.server.setting.lowSpeedDelay" :step="10" :min="100" :precision="0" spellcheck="false" /> ms
+              <a-input-number v-model:value="config.server.setting.lowSpeedDelay" :step="10" :min="100" :precision="0" spellcheck="false" /> ms
             </a-form-item> -->
             <div>使用以下DNS获取IP进行测速</div>
             <a-row style="margin-top:10px">
               <a-col span="24">
                 <a-checkbox-group
-                  v-model="getSpeedTestConfig().dnsProviders"
+                  v-model:value="getSpeedTestConfig().dnsProviders"
                   :options="speedDnsOptions"
                 />
               </a-col>
@@ -442,26 +655,26 @@ export default {
                 以下域名在启动后立即进行测速，其他域名在第一次访问时才测速
               </a-col>
               <a-col :span="2">
-                <a-button style="margin-left:10px" type="primary" icon="plus" @click="addSpeedHostname()" />
+                <a-button style="margin-left:10px" type="primary" @click="addSpeedHostname()"><PlusOutlined /></a-button>
               </a-col>
             </a-row>
-            <a-row v-for="(item, index) of getSpeedTestConfig().hostnameList" :key="index" :gutter="10" style="margin-top: 5px">
+            <a-row v-for="(item, index) of getSpeedTestConfig().hostnameList" ref="hostnameList" :key="index" :gutter="10" style="margin-top: 5px">
               <a-col :span="21">
-                <MockInput v-model="getSpeedTestConfig().hostnameList[index]" />
+                <a-input v-model:value="getSpeedTestConfig().hostnameList[index]" spellcheck="false" />
               </a-col>
               <a-col :span="2">
-                <a-button style="margin-left:10px" type="danger" icon="minus" @click="delSpeedHostname(item, index)" />
+                <a-button style="margin-left:10px" type="danger" @click="delSpeedHostname(item, index)"><MinusOutlined /></a-button>
               </a-col>
             </a-row>
 
             <a-divider />
             <a-row :gutter="10" class="mt10">
               <a-col span="24">
-                <a-button type="primary" icon="plus" @click="reSpeedTest()">
-                  立即重新测速
+                <a-button type="primary" @click="reSpeedTest()">
+                  <PlusOutlined />立即重新测速
                 </a-button>
-                <a-button class="ml10" type="primary" icon="reload" @click="reloadAllSpeedTester()">
-                  刷新
+                <a-button class="ml10" type="primary" @click="reloadAllSpeedTester()">
+                  <ReloadOutlined />刷新
                 </a-button>
               </a-col>
             </a-row>
@@ -469,32 +682,78 @@ export default {
             <a-row :gutter="20">
               <a-col v-for="(item, key) of speedTestList" :key="key" span="12">
                 <a-card size="small" class="mt10" :title="key">
-                  <a slot="extra" href="javascript:void(0)" :title="key" style="cursor:default">
-                    <a-icon v-if="item.alive.length > 0" type="check" />
-                    <a-icon v-else type="info-circle" />
-                  </a>
+                  <template #extra>
+                    <a href="javascript:void(0)" :title="key" style="cursor:default">
+                      <CloudOutlined v-if="hasCf(item)" style="color:#faad14;margin-right:4px" />
+                      <CheckOutlined v-if="item.alive.length > 0" />
+                      <InfoCircleOutlined v-else />
+                    </a>
+                  </template>
                   <a-tag
                     v-for="(element, index) of item.backupList" :key="index" style="margin:2px;"
-                    :title="element.dns" :color="element.time ? (element.time > config.server.setting.lowSpeedDelay ? 'orange' : 'green') : 'red'"
-                    :class="{'ipv6-tag': element.host.includes(':')}"
+                    :title="element.title || `测速中：${element.host}`" :color="element.time ? (element.time > config.server.setting.lowSpeedDelay ? 'orange' : 'green') : (element.title ? 'red' : '')"
                   >
-                    {{ element.host }} {{ element.time }}{{ element.time ? 'ms' : '' }} {{ element.dns }}
-                    <span v-if="element.host.includes(':')" class="ipv6-badge">IPv6</span>
+                    <CloudOutlined v-if="element.cf" style="margin-right:2px" />
+                    {{ element.host }} {{ element.time ? `${element.time}ms` : (element.title ? '' : '测速中') }} {{ element.dns }}
                   </a-tag>
                 </a-card>
               </a-col>
             </a-row>
           </div>
         </a-tab-pane>
+        <a-tab-pane key="10" tab="Cloudflare路由重定向">
+          <div v-if="activeTabKey === '10'" style="padding-right:10px">
+            <a-alert type="info" message="根据 Cloudflare 官方 IP 段（运行时动态获取），若访问域名解析到 Cloudflare IP，则自动改写为你指定的优选地址。预设 IP 优先级最高，不会被重定向。" />
+            <a-form-item label="启用功能" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-checkbox v-model:checked="config.server.cloudflareRoute.enabled">
+                启用
+              </a-checkbox>
+            </a-form-item>
+            <a-form-item label="优选地址" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input
+                v-model:value="config.server.cloudflareRoute.preferredEndpoint"
+                placeholder="可填写 IP 地址或 CNAME 域名，例如 1.2.3.4 或 example.com"
+                spellcheck="false"
+              />
+              <div class="form-help">
+                可填写 IP 地址或 CNAME 域名；留空则不进行重写。
+              </div>
+            </a-form-item>
+            <a-form-item label="模式" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-select v-model:value="config.server.cloudflareRoute.mode" class="w100">
+                <a-select-option v-for="(item2) of cfRouteModeOptions" :key="item2.value" :value="item2.value">
+                  {{ item2.label }}
+                </a-select-option>
+              </a-select>
+            </a-form-item>
+            <hr>
+            <a-row style="margin-top:10px">
+              <a-col span="21">
+                <div>域名名单：<span class="form-help">（域名配置可使用通配符或正则，填法与“域名白名单”一致）</span></div>
+              </a-col>
+              <a-col span="3">
+                <a-button style="margin-left:8px" type="primary" @click="addCfRouteDomain()"><PlusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <a-row v-for="(item, index) of cfRouteDomains" ref="cfRouteDomains" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="21">
+                <a-input v-model:value="item.key" spellcheck="false" placeholder="例如 production.cloudflare.docker.com" />
+              </a-col>
+              <a-col :span="3">
+                <a-button type="danger" @click="deleteCfRouteDomain(item, index)"><MinusOutlined /></a-button>
+              </a-col>
+            </a-row>
+          </div>
+        </a-tab-pane>
       </a-tabs>
     </div>
-    <template slot="footer">
+    <template #footer>
       <div class="footer-bar">
-        <a-button :loading="resetDefaultLoading" class="mr10" icon="sync" @click="resetDefault()">
-          恢复默认
+        <a-button :loading="resetDefaultLoading" class="mr10" @click="resetDefault()">
+          <SyncOutlined />恢复默认
         </a-button>
-        <a-button :loading="applyLoading" icon="check" type="primary" @click="apply()">
-          应用
+        <a-button :loading="applyLoading" type="primary" @click="apply()">
+          <CheckOutlined />应用
         </a-button>
       </div>
     </template>
@@ -513,11 +772,18 @@ export default {
     }
   }
 
-  .jsoneditor-vue {
+  .json-editor-wrapper {
+    display: flex;
+    flex-direction: column;
     height: 100%;
+    min-height: 400px;
   }
 
   .ant-tabs {
+    height: 100%;
+  }
+
+  .ant-tabs-content-holder {
     height: 100%;
   }
 
