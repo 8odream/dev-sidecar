@@ -3,6 +3,7 @@ const path = require('node:path')
 const lodash = require('lodash')
 const { LRUCache } = require('lru-cache')
 const dnsUtil = require('./lib/dns')
+const echDomainUtil = require('./lib/proxy/common/ech/domain')
 const interceptorImpls = require('./lib/interceptor')
 const scriptInterceptor = require('./lib/interceptor/impl/res/script')
 const { getTmpPacFilePath, downloadPacAsync, createOverwallMiddleware } = require('./lib/proxy/middleware/overwall')
@@ -13,6 +14,10 @@ const matchUtil = require('./utils/util.match')
 // 对于使用 .* 路径模式的域名（如 api.github.com），每个唯一 URL（含不同 query string）都会生成独立的缓存条目。
 // 设置上限，超出后清空最久未使用的缓存，防止长期运行时因 API 分页/唯一 token 等导致内存无界增长。
 const PATH_CACHE_MAX_SIZE = 512
+
+// ECH域名需要强制忽略的拦截器：
+// ECH握手必须使用真实SNI，因此 `sni` 拦截器（改写/禁用SNI）对ECH域名一律不生效
+const ECH_IGNORED_INTERCEPTORS = new Set(['sni'])
 
 // 处理拦截配置
 function buildIntercepts (intercepts) {
@@ -117,15 +122,27 @@ module.exports = (serverConfig) => {
 
   const preSetIpList = matchUtil.domainMapRegexply(serverConfig.preSetIpList)
 
+  // ECH配置（RFC 9848）：通过DNS的HTTPS(65)记录获取 ech 参数，用于上游TLS握手
+  const dnsEchConfig = serverConfig.dns.ech || {}
+  // ECH域名匹配表：ECH域名会强制忽略预设IP、SNI改写等常规配置，这里先解析一次
+  const echDomainMap = echDomainUtil.createEchDomainMap(dnsEchConfig)
+  // ECH域名中允许使用预设IP与IP测速的例外名单（默认全部忽略预设IP）
+  const echPreSetIpDomainMap = echDomainUtil.createEchDomainMap({ domains: dnsEchConfig.preSetIpDomains })
+  const isEchEnabled = dnsEchConfig.enabled !== false && dnsEchConfig.use !== false
+  const checkEchDomain = hostname => isEchEnabled && echDomainUtil.isEchDomain(echDomainMap, hostname)
+
   const options = {
     host: serverConfig.host,
     port: serverConfig.port,
     maxLength: serverConfig.fakeServerMaxLength,
     dnsConfig: {
       preSetIpList,
-      dnsMap: dnsUtil.initDNS(serverConfig.dns.providers, preSetIpList),
+      dnsMap: dnsUtil.initDNS(serverConfig.dns.providers, preSetIpList, { ech: dnsEchConfig }),
       mapping: matchUtil.domainMapRegexply(dnsMapping),
       speedTest: serverConfig.dns.speedTest,
+      ech: dnsEchConfig,
+      echDomains: echDomainMap,
+      echPreSetIpDomains: echPreSetIpDomainMap,
     },
     setting,
     compatibleConfig: {
@@ -148,6 +165,12 @@ module.exports = (serverConfig) => {
       if ((!!matched) === true) {
         log.debug(`拦截器拦截：${req.url}, matched:`, matched)
         return matched // 拦截
+      }
+
+      // ECH域名：必须被拦截（MITM）才能在上游TLS握手中使用ECH，即使没有配置拦截器
+      if (checkEchDomain(hostname)) {
+        log.info(`为ECH域名，拦截: ${hostname}`)
+        return true // 拦截
       }
 
       return null // 不在白名单中，也未配置在拦截功能中，跳过当前拦截器，由下一个拦截器判断
@@ -179,6 +202,8 @@ module.exports = (serverConfig) => {
 
       const matchIntercepts = []
       const matchInterceptsOpts = {}
+      // ECH域名：强制忽略会破坏ECH握手的拦截器（如 sni 改写）
+      const isEchDomain = checkEchDomain(rOptions.hostname)
       for (const regexp in interceptOpts) { // 遍历拦截配置
         // 跳过hostname匹配结果，它不是路径正则
         if (regexp === 'matched') {
@@ -220,6 +245,12 @@ module.exports = (serverConfig) => {
 
         // log.info(`interceptor matched, regexp: '${regexp}' =>`, JSON.stringify(interceptOpt), ', url:', url)
         for (const impl of interceptorImpls) {
+          // ECH域名：ECH握手必须使用真实SNI，忽略 sni 等会与ECH冲突的拦截器
+          if (isEchDomain && ECH_IGNORED_INTERCEPTORS.has(impl.name)) {
+            log.info(`ECH域名忽略拦截器 '${impl.name}': ${rOptions.hostname}`)
+            continue
+          }
+
           // 根据拦截配置挑选合适的拦截器来处理
           if (impl.is && impl.is(interceptOpt)) {
             let action = 'add'

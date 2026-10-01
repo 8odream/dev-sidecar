@@ -456,6 +456,50 @@ const defaultConfig = {
         hostnameList: ['github.com'],
         dnsProviders: ['cloudflare', 'safe360', 'rubyfish'],
       },
+      /*
+       * ECH（Encrypted Client Hello）配置
+       *
+       * 通过DNS的 HTTPS(65) 记录中的 ech 参数（SvcParamKey=5）获取 ECHConfigList，
+       * 并在「代理 ➜ 源站」的上游TLS握手时使用ECH，使SNI对中间网络不可见。
+       *
+       * @param enabled 是否从DNS获取ECH参数，默认 true
+       * @param use 是否在上游TLS握手时真正使用ECH，默认 true（不可用时自动降级为普通TLS）
+       * @param domains 需要使用ECH的域名列表（支持通配符，如 `*.cloudflare.com`），默认为空表示不启用
+       * @param cacheSize ECH参数缓存的最大条数
+       * @param emptyTtl DNS未下发ech参数时的缓存时间(ms)，默认10分钟
+       * @param minTtl DNS未给出TTL时的默认缓存时间(ms)，默认1分钟
+       * @param maxTtl 最大缓存时间(ms)，默认1小时
+       * @param tryAllProviders 该域名映射的DNS未下发ech参数时，是否尝试其它DNS，默认 true
+       * @param parallelDelay 并发查询多个DNS时，除第一个DNS外的其它DNS的延迟启动时间(ms)，默认200；设为0表示全部同时查询
+       * @param dns ECH域名专用的DNS名称（取值来自「DNS服务管理」中的DNS名称），默认空表示不指定；
+       *            指定后，ECH域名只从该DNS获取ECH参数与IP解析结果（不再使用预设IP、IP测速与其它DNS）
+       * @param publicName 共享ECH配置的来源域名，默认 `cloudflare-ech.com`；域名自身未下发ECH记录时，
+       *                   用它的ECH配置兜底（Cloudflare 的共享配置对所有 Cloudflare 站点通用），
+       *                   设为空字符串表示不使用共享配置
+       * @param preSetIpDomains ECH域名中允许使用「预设IP」与「IP测速」结果的例外名单（默认空 = 全部忽略）；
+       *                        Cloudflare 站点在默认解析出的IP被阻断时，可用它把域名指到一组可用的 Cloudflare IP，
+       *                        但域名自己的预设IP若不支持ECH会导致ECH握手失败（只能回退原生TLS），需谨慎添加
+       *
+       * 注：`domains` 名单中的域名会强制忽略常规的 SNI 改写与预设IP等配置：
+       *     名单中的域名会被自动拦截（无需再配置拦截器），上游TLS握手使用真实SNI，
+       *     并通过DNS获取到的ECH参数加密SNI；任何一步失败都会自动降级为普通TLS。
+       *
+       * 注：也可以在某个DNS的provider配置中增加 `ech: false`，单独关闭该DNS的ECH查询
+       */
+      ech: {
+        enabled: true,
+        use: true,
+        domains: [],
+        dns: '',
+        publicName: 'cloudflare-ech.com',
+        preSetIpDomains: [],
+        cacheSize: 512,
+        emptyTtl: 600000,
+        minTtl: 60000,
+        maxTtl: 3600000,
+        tryAllProviders: true,
+        parallelDelay: 200,
+      },
     },
   },
   proxy: {},

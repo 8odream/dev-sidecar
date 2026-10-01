@@ -9,10 +9,15 @@ const commonUtil = require('../common/util')
 const DnsUtil = require('../../dns')
 const { reportIPv6Error } = require('../../dns/base')
 const compatible = require('../compatible/compatible')
+const echUtil = require('../common/ech')
 const InsertScriptMiddleware = require('../middleware/InsertScriptMiddleware')
 const dnsLookup = require('./dnsLookup')
 
 const MAX_SLOW_TIME = 8000 // 超过此时间 则认为太慢了
+// 连接超时定时器：OS 级 TCP 超时 15-21 秒太慢，7 秒内未建立连接则判定 IP 不通
+const CONNECT_TIMEOUT = 7000
+// 使用上游ECH的请求：建连过程还包括查询DNS的HTTPS记录和ECH握手，需要更长的超时时间
+const ECH_CONNECT_TIMEOUT = 30000
 const MAX_RETRY_BODY_SIZE = 1024 * 1024 // 自动重试时最多缓存 1MB 请求体，超过则跳过重试
 const WWW_AUTH_HEADER_RE = /^www-authenticate$/i
 
@@ -110,6 +115,11 @@ function compactROptions (rOptions) {
 
 // create requestHandler function
 module.exports = function createRequestHandler (createIntercepts, middlewares, externalProxy, dnsConfig, setting, compatibleConfig) {
+  // 上游ECH：只对配置中 `server.dns.ech.domains` 指定的域名生效，配置为空时返回null（保持原有行为）
+  const echAgentPair = externalProxy == null
+    ? echUtil.createEchAgentPair({ dnsConfig, ech: dnsConfig == null ? null : dnsConfig.ech })
+    : null
+
   // return
   return function requestHandler (req, res, ssl) {
     let proxyReq
@@ -232,8 +242,11 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             // 请求地址本身就是 IP 时，不会触发 DNS lookup，直接写入响应头
             res.setHeader('DS-DNS', `host: ${rOptions.hostname}`)
           } else if (dnsConfig && dnsConfig.dnsMap) {
+            // ECH域名：默认强制忽略预设IP与IP测速结果，只从ECH指定的DNS（未指定时为域名映射的DNS）解析
+            const isEchDomain = DnsUtil.isEchDomain(dnsConfig, rOptions.hostname)
+            const ignorePreSetIp = isEchDomain && DnsUtil.isEchIgnorePreSetIp(dnsConfig, rOptions.hostname)
             let dnsAndFamily = DnsUtil.getDNSAndFamily(dnsConfig, rOptions.hostname)
-            if (!dnsAndFamily && rOptions.servername) {
+            if (!dnsAndFamily && rOptions.servername && !isEchDomain) {
               const dns = dnsConfig.dnsMap.ForSNI
               if (dns) {
                 dnsAndFamily = { dns }
@@ -243,7 +256,10 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
               }
             }
             if (dnsAndFamily) {
-              rOptions.lookup = dnsLookup.createLookupFunc(res, dnsAndFamily, 'request url', url, rOptions.port, isDnsIntercept)
+              rOptions.lookup = dnsLookup.createLookupFunc(res, dnsAndFamily, 'request url', url, rOptions.port, isDnsIntercept, {
+                ignorePreSetIpList: ignorePreSetIp,
+                ignoreSpeedTest: ignorePreSetIp,
+              })
               if (dnsAndFamily.family === 6) {
                 rOptions.family = 6
               }
@@ -285,6 +301,13 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             }
           }
 
+          // 上游ECH：指定域名在TLS握手时使用DNS下发的ECH参数（失败自动回退原生TLS）
+          let isEchRequest = false
+          if (echAgentPair != null && rOptions.protocol === 'https:' && typeof rOptions.agent === 'object' && rOptions.agent != null && echAgentPair.match(rOptions.hostname)) {
+            isEchRequest = true
+            rOptions.agent = echAgentPair.wrap(rOptions.agent)
+          }
+
           res.setHeader('DS-Proxy-Request-Family', rOptions.family || 4)
           proxyReq = (rOptions.protocol === 'https:' ? https : http).request(rOptions, (proxyRes) => {
             const cost = Date.now() - start
@@ -320,8 +343,14 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             const error = new Error(errorMsg)
             error.retryable = true
             proxyReq.destroy(error)
-          }, 7000)
+          }, isEchRequest ? ECH_CONNECT_TIMEOUT : CONNECT_TIMEOUT)
           proxyReq.once('socket', (socket) => {
+            // 上游ECH：让调用方能在浏览器F12里看到这次请求是否真的用上了ECH
+            //  - `DS-ECH: 1` 表示ECH握手成功（SNI已加密）
+            //  - `DS-ECH: 0` 表示该域名在ECH名单中，但本次未能使用ECH（目标站未下发ECH记录、握手失败或已回退原生TLS）
+            if (isEchRequest && res && !res.headersSent) {
+              res.setHeader('DS-ECH', socket.echAccepted === true ? '1' : '0')
+            }
             const updateDsDnsFromSocket = () => {
               if (res && !res.headersSent && dnsHeaderLabel && socket.remoteAddress) {
                 let family = socket.remoteFamily

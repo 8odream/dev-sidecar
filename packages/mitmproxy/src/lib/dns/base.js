@@ -2,6 +2,7 @@ const { LRUCache } = require('lru-cache')
 const log = require('../../utils/util.log.server')
 const matchUtil = require('../../utils/util.match')
 const { isIPv6 } = require('./util.ip')
+const svcbUtil = require('./util.svcb')
 const { DynamicChoice } = require('../choice/index')
 const os = require('node:os')
 
@@ -45,6 +46,14 @@ function mapToList (ipMap) {
 
 const defaultCacheSize = 1024
 
+// ECH（Encrypted Client Hello）相关默认值
+const defaultEchCacheSize = 512 // ECH配置缓存的最大条数
+const defaultEchEmptyTtl = 10 * 60 * 1000 // DNS未下发ech参数时的缓存时间(ms)
+const defaultEchMinTtl = 60 * 1000 // DNS未给出TTL时的默认缓存时间(ms)
+const defaultEchMaxTtl = 60 * 60 * 1000 // 最大缓存时间(ms)
+const ECH_QUERY_TIMEOUT = 8000 // 查询HTTPS记录的超时时间(ms)
+const ECH_MAX_ALIAS_DEPTH = 3 // HTTPS记录中 AliasMode(priority=0) 的最大跟随层数
+
 class IpCache extends DynamicChoice {
   constructor (hostname) {
     super(hostname)
@@ -75,6 +84,16 @@ module.exports = class BaseDNS {
       },
     })
 
+    // ECH 相关（RFC 9848：通过DNS的HTTPS(65)记录中的 ech 参数来启用ECH）
+    this.echConfig = null
+    this.echCache = null
+    this.echPendingMap = new Map()
+    this.echStat = {
+      query: 0,
+      hit: 0,
+      error: 0,
+    }
+
     if (!dnsServer) {
       return
     }
@@ -88,6 +107,215 @@ module.exports = class BaseDNS {
     if (ipCache) {
       ipCache.doCount(ip, isError)
     }
+  }
+
+  /**
+   * 初始化ECH支持，由 `dns/index.js` 在创建DNS实例后调用
+   *
+   * @param options.enabled 是否启用ECH（查询DNS的HTTPS记录）
+   * @param options.cacheSize ECH配置缓存的最大条数
+   * @param options.emptyTtl DNS未下发ech参数时的缓存时间(ms)
+   * @param options.minTtl DNS未给出TTL时的默认缓存时间(ms)
+   * @param options.maxTtl 最大缓存时间(ms)
+   */
+  initEch (options = {}) {
+    this.echConfig = {
+      enabled: options.enabled !== false,
+      emptyTtl: options.emptyTtl > 0 ? options.emptyTtl : defaultEchEmptyTtl,
+      minTtl: options.minTtl > 0 ? options.minTtl : defaultEchMinTtl,
+      maxTtl: options.maxTtl > 0 ? options.maxTtl : defaultEchMaxTtl,
+    }
+    if (this.echCache == null) {
+      this.echCache = new LRUCache({
+        max: options.cacheSize > 0 ? options.cacheSize : defaultEchCacheSize,
+      })
+    }
+  }
+
+  /**
+   * 该DNS服务是否支持获取ECH参数（需要支持 HTTPS(65) 记录的查询，且已启用ECH）
+   */
+  get echEnabled () {
+    return this.echConfig != null && this.echConfig.enabled && typeof this._svcbQueryPromise === 'function'
+  }
+
+  /**
+   * 获取该域名由DNS下发的 ECH 参数（RFC 9848）
+   *
+   * @returns {Promise<null|object>} 形如 `{ echConfigList, publicName, config, configs, ttl, dnsName, dnsType }`
+   */
+  async lookupEch (hostname, options = {}) {
+    if (!this.echEnabled) {
+      return null
+    }
+
+    const cached = this.echCache.get(hostname)
+    if (cached !== undefined) {
+      this.echStat.hit++
+      if (cached === false) {
+        log.debug(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 命中缓存（该域名未下发ech参数）: ${hostname}`)
+        return null
+      }
+      log.debug(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 命中缓存: ${hostname} ➜ public_name: ${cached.publicName}`)
+      return cached
+    }
+
+    // 同一个域名的并发查询合并为一次
+    const pending = this.echPendingMap.get(hostname)
+    if (pending != null) {
+      return await pending
+    }
+
+    const promise = this._lookupEch(hostname, 0, options).finally(() => {
+      this.echPendingMap.delete(hostname)
+    })
+    this.echPendingMap.set(hostname, promise)
+    return await promise
+  }
+
+  async _lookupEch (hostname, depth, options = {}) {
+    const start = Date.now()
+    this.echStat.query++
+
+    let response
+    try {
+      response = await this._doSvcbQuery(hostname, 'HTTPS', start)
+    } catch (e) {
+      this.echStat.error++
+      log.warn(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 查询HTTPS记录失败: ${hostname}, error: ${e.message}`)
+      return null
+    }
+
+    const parsed = this._parseEchResponse(hostname, response, start)
+
+    // 处理 AliasMode（priority=0）：继续查询其指向的域名
+    if (parsed != null && parsed.alias != null && depth < ECH_MAX_ALIAS_DEPTH) {
+      log.info(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] ${hostname} 的HTTPS记录为AliasMode，跟随查询: ${parsed.alias}`)
+      return await this._lookupEch(parsed.alias, depth + 1, options)
+    }
+
+    if (parsed == null || parsed.echConfigList == null) {
+      // 缓存「该域名未下发ech参数」，避免每次请求都查询一次
+      this.echCache.set(hostname, false, { ttl: this.echConfig.emptyTtl })
+      return null
+    }
+
+    const ttl = Math.min(Math.max((parsed.recordTtl || 0) * 1000, this.echConfig.minTtl), this.echConfig.maxTtl)
+    const result = {
+      echConfigList: parsed.echConfigList,
+      configs: parsed.configs,
+      config: parsed.config,
+      publicName: parsed.config.publicName,
+      priority: parsed.priority,
+      target: parsed.target,
+      ipv4hint: parsed.ipv4hint,
+      ipv6hint: parsed.ipv6hint,
+      alpn: parsed.alpn,
+      ttl,
+      expireAt: Date.now() + ttl,
+      dnsName: this.dnsName,
+      dnsType: this.dnsType,
+    }
+
+    this.echCache.set(hostname, result, { ttl })
+    log.info(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 获取到该域名的ECH参数： ${hostname} ➜ public_name: ${result.publicName}, kem: ${result.config.kem}, ech: ${result.echConfigList.length} bytes, ttl: ${parsed.recordTtl}s`)
+
+    return result
+  }
+
+  /**
+   * 从 HTTPS(65) 记录的响应中解析出 ech 参数
+   */
+  _parseEchResponse (hostname, response, start) {
+    const cost = Date.now() - (start == null ? Date.now() : start)
+
+    if (response == null || response.answers == null || response.answers.length === 0) {
+      log.info(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 该域名未下发HTTPS记录: ${hostname}, cost: ${cost} ms`)
+      return null
+    }
+
+    const records = response.answers.filter(item => item.data != null && svcbUtil.isSvcType(item.type))
+    if (records.length === 0) {
+      log.info(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 该域名未下发HTTPS记录: ${hostname}, cost: ${cost} ms`)
+      return null
+    }
+
+    // AliasMode：priority=0 且 target 不是根域名，需要继续查询target
+    const aliasRecord = records.find(item => item.data.priority === 0 && item.data.target && item.data.target !== '.')
+    if (aliasRecord != null) {
+      return {
+        alias: aliasRecord.data.target,
+      }
+    }
+
+    // ServiceMode：按priority升序，取第一个下发了ech参数的记录（RFC 9460 §3.1）
+    const serviceRecords = records
+      .filter(item => item.data.priority > 0)
+      .sort((a, b) => a.data.priority - b.data.priority)
+
+    const record = serviceRecords.find(item => item.data.ech != null && item.data.ech.length > 0)
+    if (record == null) {
+      log.info(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 该域名的HTTPS记录未下发ech参数: ${hostname}, cost: ${cost} ms`)
+      return null
+    }
+
+    const echConfigList = record.data.ech
+    const config = svcbUtil.pickEchConfig(echConfigList)
+    if (config == null) {
+      log.warn(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] 该域名的ECH参数无法使用: ${hostname}, ech: ${echConfigList.toString('base64')}`)
+      return null
+    }
+
+    return {
+      echConfigList,
+      configs: svcbUtil.parseEchConfigList(echConfigList),
+      config,
+      priority: record.data.priority,
+      target: record.data.target,
+      ipv4hint: record.data.paramMap.ipv4hint,
+      ipv6hint: record.data.paramMap.ipv6hint,
+      alpn: record.data.paramMap.alpn,
+      recordTtl: record.ttl,
+      cost,
+    }
+  }
+
+  /**
+   * 查询 HTTPS(65) 记录，带超时控制
+   */
+  _doSvcbQuery (hostname, type = 'HTTPS', start) {
+    if (start == null) {
+      start = Date.now()
+    }
+
+    return new Promise((resolve, reject) => {
+      let isOver = false
+      const timeoutId = setTimeout(() => {
+        if (!isOver) {
+          isOver = true
+          log.error(`[ECH][DNS-over-${this.dnsType} '${this.dnsName}'] DNS查询超时, hostname: ${hostname}, type: ${type}, dnsServer: ${this.dnsServer}${this.dnsServerPort ? `:${this.dnsServerPort}` : ''}, cost: ${Date.now() - start} ms`)
+          reject(new Error('DNS查询超时'))
+        }
+      }, ECH_QUERY_TIMEOUT)
+
+      try {
+        this._svcbQueryPromise(hostname, type)
+          .then((response) => {
+            isOver = true
+            clearTimeout(timeoutId)
+            resolve(response)
+          })
+          .catch((e) => {
+            isOver = true
+            clearTimeout(timeoutId)
+            reject(e)
+          })
+      } catch (e) {
+        isOver = true
+        clearTimeout(timeoutId)
+        reject(e)
+      }
+    })
   }
 
   async lookup (hostname, options = {}) {
@@ -155,7 +383,8 @@ module.exports = class BaseDNS {
   }
 
   async _lookupWithPreSetIpList (hostname, options = {}) {
-    if (this.preSetIpList) {
+    // ECH域名强制忽略预设IP：预设IP往往是域名自身的源站IP，不支持ECH，会导致ECH握手失败
+    if (this.preSetIpList && options.ignorePreSetIpList !== true) {
       // 获取当前域名的预设IP列表
       let hostnamePreSetIpList = matchUtil.matchHostname(this.preSetIpList, hostname, `matched preSetIpList(${this.dnsName})`)
       if (hostnamePreSetIpList && (hostnamePreSetIpList.length > 0 || hostnamePreSetIpList.length === undefined)) {

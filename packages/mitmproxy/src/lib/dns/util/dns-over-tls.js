@@ -3,7 +3,9 @@
  */
 const dnsPacket = require('dns-packet')
 const tls_1 = require('node:tls')
+const { Buffer } = require('node:buffer')
 const randi = require('random-int')
+const svcbUtil = require('../util.svcb')
 
 const TWO_BYTES = 2
 
@@ -16,7 +18,20 @@ function getDnsQuery ({ type, name, klass, id }) {
   }
 }
 
-function query ({ host, servername, type, name, klass, port, family, rejectUnauthorized, timeout }) {
+/**
+ * 给DNS报文添加2字节长度头（DoT/DoH的TCP报文格式）
+ */
+function frame (buffer) {
+  const lengthBuffer = Buffer.alloc(TWO_BYTES)
+  lengthBuffer.writeUInt16BE(buffer.length)
+  return Buffer.concat([lengthBuffer, buffer])
+}
+
+/**
+ * @param options.queryBuffer 自定义查询报文（已带2字节长度头），用于查询 `dns-packet` 不支持的类型，如 HTTPS(65)
+ * @param options.decode 自定义响应解码函数，入参为不带长度头的DNS报文
+ */
+function query ({ host, servername, type, name, klass, port, family, rejectUnauthorized, timeout, queryBuffer, decode }) {
   return new Promise((resolve, reject) => {
     if (!host || !servername || !name) {
       throw new Error('At least host, servername and name must be set.')
@@ -25,7 +40,7 @@ function query ({ host, servername, type, name, klass, port, family, rejectUnaut
     let response = Buffer.alloc(0)
     let packetLength = 0
     const dnsQuery = getDnsQuery({ id: randi(0x0, 0xFFFF), type, name, klass })
-    const dnsQueryBuf = dnsPacket.streamEncode(dnsQuery)
+    const dnsQueryBuf = queryBuffer != null ? queryBuffer : dnsPacket.streamEncode(dnsQuery)
     const socket = tls_1.connect({ host, port, servername, family: Number.parseInt(family) === 6 ? 6 : 4, rejectUnauthorized, timeout })
 
     // 超时处理
@@ -64,7 +79,11 @@ function query ({ host, servername, type, name, klass, port, family, rejectUnaut
 
         if (response.length >= packetLength + TWO_BYTES) {
           socket.destroy()
-          resolve(dnsPacket.streamDecode(response))
+          if (decode != null) {
+            resolve(decode(response.subarray(TWO_BYTES, TWO_BYTES + packetLength)))
+          } else {
+            resolve(dnsPacket.streamDecode(response))
+          }
         }
       } catch (e) {
         socket.destroy()
@@ -81,5 +100,23 @@ function query ({ host, servername, type, name, klass, port, family, rejectUnaut
   })
 }
 
+/**
+ * 查询 HTTPS(65)/SVCB(64) 记录（`dns-packet` 不支持该类型，使用 `util.svcb` 自行编解码）
+ */
+function querySvcb ({ host, servername, name, type, port, family, rejectUnauthorized, timeout }) {
+  return query({
+    host,
+    servername,
+    name,
+    port,
+    family,
+    rejectUnauthorized,
+    timeout,
+    queryBuffer: frame(svcbUtil.encodeQuery(name, { type: svcbUtil.typeCode(type) })),
+    decode: buffer => svcbUtil.parseResponse(buffer),
+  })
+}
+
 exports.query = query
-exports.default = { query }
+exports.querySvcb = querySvcb
+exports.default = { query, querySvcb }

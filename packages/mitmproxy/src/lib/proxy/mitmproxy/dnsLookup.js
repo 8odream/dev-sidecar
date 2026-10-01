@@ -83,11 +83,15 @@ function createIpChecker (tester) {
 }
 
 module.exports = {
-  createLookupFunc (res, dnsAndFamily, action, target, port, isDnsIntercept) {
+  // options.ignorePreSetIpList: ECH域名强制忽略预设IP（预设IP通常是域名自身的源站IP，不支持ECH）
+  // options.ignoreSpeedTest: ECH域名强制忽略IP测速结果（测速池同样可能来自预设IP或其它DNS）
+  createLookupFunc (res, dnsAndFamily, action, target, port, isDnsIntercept, options = {}) {
     target = target ? (`, target: ${target}`) : ''
 
     const dns = dnsAndFamily.dns
     const family = Number.parseInt(dnsAndFamily.family) === 6 ? 6 : 4
+    const ignorePreSetIpList = options.ignorePreSetIpList === true
+    const ignoreSpeedTest = options.ignoreSpeedTest === true
 
     return (hostname, options, callback) => {
       const all = options && options.all === true
@@ -114,7 +118,7 @@ module.exports = {
           callback(err, address, family)
         })
       }
-      const tester = speedTest.getSpeedTester(hostname, port)
+      const tester = ignoreSpeedTest ? null : speedTest.getSpeedTester(hostname, port)
       if (tester) {
         const aliveIpObj = tester.pickFastAliveIpObj()
         if (aliveIpObj && isValidIpAddress(aliveIpObj.host) && !isZeroIp(aliveIpObj.host)) {
@@ -160,7 +164,7 @@ module.exports = {
         }
       }
 
-      dns.lookup(hostname, { ipChecker, family }).then((ip) => {
+      dns.lookup(hostname, { ipChecker, family, ignorePreSetIpList }).then((ip) => {
         if (ip !== hostname && isValidIpAddress(ip)) {
           markBlockedIfAllZero(hostname, ip)
           ip = rewriteCloudflareIp(hostname, ip, dns && dns.dnsName === 'PreSet')

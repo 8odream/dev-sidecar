@@ -11,6 +11,24 @@ module.exports = class DNSOverTLS extends BaseDNS {
     this.isIPv6 = dnsServer.includes(':') && dnsServer.includes('[') && dnsServer.includes(']')
   }
 
+  /**
+   * 查询 HTTPS(65)/SVCB(64) 记录，用于获取 DNS 下发的 ECH 参数
+   */
+  _svcbQueryPromise (hostname, type = 'HTTPS') {
+    return dnstls.querySvcb({
+      host: this.dnsServer,
+      port: this.dnsServerPort,
+      servername: this.dnsServerName || this.dnsServer,
+      family: this.dnsFamily,
+      rejectUnauthorized: !this.dnsServerName,
+
+      name: hostname,
+      type,
+
+      timeout: 4000,
+    })
+  }
+
   _dnsQueryPromise (hostname, type = 'A') {
     const options = {
       host: this.dnsServer,
