@@ -500,6 +500,48 @@ const defaultConfig = {
         tryAllProviders: true,
         parallelDelay: 200,
       },
+      /*
+       * NAT64（RFC 6146）直连配置
+       *
+       * 把域名解析出的**真实IPv4**嵌入一个 NAT64 IPv6 前缀，通过 IPv6 网络直连该站点。
+       * 典型用途：本网络的DNS被投毒、且直连（含DoH）被阻断时，仍然能拿到真实IP并完成连接；
+       * 公共NAT64网关的出口在境外，可同时绕过 SNI 阻断与源站的地区封锁。
+       *
+       * 名单中的域名会被自动当作 ECH 域名处理：自动拦截（无需再配置拦截器）、跳过增强模式、
+       * 忽略SNI改写与预设IP，并在上游TLS握手时使用ECH（ECH 与 NAT64 需配合使用：
+       * SNI 被加密后中间网络才无法按域名重置连接）。
+       *
+       * @param enabled 是否启用NAT64，默认 false（是否可用取决于所在网络能否访问该NAT64前缀）
+       * @param prefix NAT64前缀，默认 `2a01:4f8:c2c:123f:64:5::`（公共NAT64网关，可自行替换）
+       * @param domains 走NAT64直连的域名列表（支持通配符与正则，填法与「域名白名单」一致），默认空表示不启用
+       * @param dns 「解析用DNS」：从「DNS服务管理」中选择一个DNS服务名（设置方式与「ECH专用DNS」一致），
+       *            该DNS需为DoH类型（地址以 `https://` 开头），选中的DNS不可用时会自动回退到默认DoH
+       * @param doh 直接指定查询域名真实A记录的DoH地址（高级用法，经NAT64通道访问），
+       *            可配置多个（数组或逗号分隔）、按顺序并发尝试、先返回者胜；
+       *            未指定 `dns` 时默认依次为 `dns.alidns.com`、`cloudflare-dns.com`、`dns.google`
+       * @param bootstrap DoH域名对应的真实IPv4（域名本身可能被投毒，必须直接给出地址）
+       * @param cacheTtl 真实A记录的缓存时间(ms)，默认5分钟
+       * @param verifySsl 经NAT64访问DoH时是否校验证书，默认 false（该通道仅用于引导解析，证书链可能被中间网络干扰）
+       */
+      nat64: {
+        enabled: false,
+        prefix: '2a01:4f8:c2c:123f:64:5::',
+        domains: [],
+        dns: '',
+        doh: [
+          'https://dns.alidns.com/resolve',
+          'https://cloudflare-dns.com/dns-query',
+          'https://dns.google/resolve',
+        ],
+        bootstrap: {
+          'dns.alidns.com': ['223.5.5.5', '223.6.6.6'],
+          'doh.pub': ['1.12.12.12', '120.53.53.53'],
+          'cloudflare-dns.com': ['1.1.1.1', '1.0.0.1'],
+          'dns.google': ['8.8.8.8', '8.8.4.4'],
+        },
+        cacheTtl: 300000,
+        verifySsl: false,
+      },
     },
   },
   proxy: {},

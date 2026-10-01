@@ -6,6 +6,7 @@ import Pip from '../pages/plugin/pip'
 import FreeEye from '../pages/plugin/free-eye.vue'
 import Proxy from '../pages/proxy'
 import Server from '../pages/server'
+import ServiceGroup from '../pages/service-group.vue'
 import Setting from '../pages/setting'
 import Help from '../pages/help'
 import Traffic from '../pages/traffic.vue'
@@ -15,6 +16,7 @@ const routes = [
   { path: '/', redirect: '/index' },
   { path: '/index', component: Index },
   { path: '/server', component: Server },
+  { path: '/service-group', component: ServiceGroup },
   { path: '/proxy', component: Proxy },
   { path: '/setting', component: Setting },
   { path: '/help', component: Help },

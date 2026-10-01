@@ -38,6 +38,15 @@ function bindSession ({ socket, rawSocket, session, info }) {
       socket.destroy(error)
     }
   })
+  // 转发空闲超时：http 客户端和 agentkeepalive 都是监听包装后的socket上的'timeout'事件
+  // （空闲连接到期回收、卡住的请求中断）。不转发的话，rawSocket上的定时器没有监听者，
+  // 包装后的socket永远不会超时：被中间设备掐断的连接会一直留在连接池里，复用时请求要挂到
+  // 对端RST才报错（表现为几十秒后 read ECONNRESET）。
+  rawSocket.on('timeout', () => {
+    if (!socket.destroyed) {
+      socket.emit('timeout')
+    }
+  })
   socket.encrypted = true
   socket.servername = info.servername
   socket.alpnProtocol = info.alpnProtocol || false
@@ -92,6 +101,8 @@ function createTlsSocket ({ rawSocket, session, info }) {
     if (callback) {
       socket.once('timeout', callback)
     }
+    // agentkeepalive 会读 socket.timeout 判断是否需要重设超时
+    socket.timeout = timeout
     rawSocket.setTimeout(timeout)
     return socket
   }

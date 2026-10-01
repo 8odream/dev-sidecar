@@ -242,7 +242,8 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             // 请求地址本身就是 IP 时，不会触发 DNS lookup，直接写入响应头
             res.setHeader('DS-DNS', `host: ${rOptions.hostname}`)
           } else if (dnsConfig && dnsConfig.dnsMap) {
-            // ECH域名：默认强制忽略预设IP与IP测速结果，只从ECH指定的DNS（未指定时为域名映射的DNS）解析
+            // ECH域名：默认强制忽略预设IP与IP测速结果，优先从ECH指定的DNS（未指定时为域名映射的DNS）解析，
+            // 解析不出可用IP时由 dnsLookup 回退到预设IP；`server.dns.ech.preSetIpDomains` 里的域名例外则强制优先使用预设IP
             const isEchDomain = DnsUtil.isEchDomain(dnsConfig, rOptions.hostname)
             const ignorePreSetIp = isEchDomain && DnsUtil.isEchIgnorePreSetIp(dnsConfig, rOptions.hostname)
             let dnsAndFamily = DnsUtil.getDNSAndFamily(dnsConfig, rOptions.hostname)
@@ -258,7 +259,13 @@ module.exports = function createRequestHandler (createIntercepts, middlewares, e
             if (dnsAndFamily) {
               rOptions.lookup = dnsLookup.createLookupFunc(res, dnsAndFamily, 'request url', url, rOptions.port, isDnsIntercept, {
                 ignorePreSetIpList: ignorePreSetIp,
-                ignoreSpeedTest: ignorePreSetIp,
+                // ECH域名不做IP测速：测速只比较TCP连接耗时，选出的「最快IP」未必能完成ECH握手或数据面传输，
+                // 会把请求长期固定在一个坏IP上（测速结果有缓存，而 countEchIp 的ECH失败反馈改不了它）。
+                // 关闭测速后由「预设IP」缓存的 value 决定，并能被ECH失败反馈逐个切换IP。
+                ignoreSpeedTest: isEchDomain,
+                // ECH域名：ECH专用DNS解析不出可用IP时回退到预设IP，并在缓存退化为域名兜底项时重新尝试真实IP
+                resetOnHostnameFallback: isEchDomain,
+                preSetDns: ignorePreSetIp ? dnsConfig.dnsMap.PreSet : null,
               })
               if (dnsAndFamily.family === 6) {
                 rOptions.family = 6

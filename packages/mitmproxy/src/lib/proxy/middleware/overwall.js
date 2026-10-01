@@ -35,6 +35,22 @@ function matchTarget (hostname, overWallTargetMap) {
   }
 }
 
+// 判断该域名是否要进入增强模式的反代路径
+// ECH域名必须直连：ECH的意义就是让「直连」的上游TLS握手不被SNI阻断/中间人干扰，
+// 一旦转发到增强模式的反代服务器，就等于放弃了ECH（反代服务器用自己的SNI去连目标站点），
+// 还可能因为反代出口的线路/机房导致服务降级，因此ECH域名不进入增强模式，也不会在失败后回落到这里
+function matchOverwallTarget (hostname, overWallTargetMap, checkEchDomain) {
+  const target = matchTarget(hostname, overWallTargetMap)
+  if (target == null) {
+    return null
+  }
+  if (checkEchDomain != null && checkEchDomain(hostname)) {
+    log.info(`域名 ${hostname} 已启用ECH，跳过增强模式，直接连接`)
+    return null
+  }
+  return target
+}
+
 function getUserBasePath () {
   const userHome = process.env.USERPROFILE || process.env.HOME || '/'
   return path.resolve(userHome, './.dev-sidecar')
@@ -161,10 +177,12 @@ function buildServerList (overWallConfig) {
   return list
 }
 
-function createOverwallMiddleware (overWallConfig) {
+function createOverwallMiddleware (overWallConfig, options = {}) {
   if (!overWallConfig || overWallConfig.enabled !== true) {
     return null
   }
+  // ECH域名匹配器（由 options.js 传入）：ECH域名不进入增强模式的反代路径
+  const checkEchDomain = options.checkEchDomain
   if (overWallConfig.pac && overWallConfig.pac.enabled) {
     // 初始化pac
     pacClient = pac.createPacClient(overWallConfig.pac.pacFileAbsolutePath)
@@ -193,6 +211,10 @@ function createOverwallMiddleware (overWallConfig) {
   return {
     sslConnectInterceptor: (req, _cltSocket, _head) => {
       const hostname = req.url.split(':')[0]
+      if (checkEchDomain != null && checkEchDomain(hostname)) {
+        // ECH域名需要被代理拦截（MITM）后在上游使用ECH，这里不能返回 false 终止拦截判断
+        return null
+      }
       return matchTarget(hostname, overWallTargetMap) != null
     },
     requestIntercept (context, req, res, _ssl, _next) {
@@ -201,7 +223,7 @@ function createOverwallMiddleware (overWallConfig) {
         return
       }
       const hostname = rOptions.hostname
-      const target = matchTarget(hostname, overWallTargetMap)
+      const target = matchOverwallTarget(hostname, overWallTargetMap, checkEchDomain)
       if (target == null) {
         return
       }

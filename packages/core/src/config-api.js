@@ -164,7 +164,10 @@ const configApi = {
     // 将差异作为用户配置保存到 config.json 中
     const configPath = configLoader.getUserConfigPath()
     try {
-      fs.writeFileSync(configPath, jsonApi.stringify(diffConfig))
+      // 保留配置文件里原有的 `//` 注释（服务分组的分组名就来自这些注释）
+      const serviceGroup = require('./service-group.js')
+      const jsonText = jsonApi.stringify(diffConfig)
+      fs.writeFileSync(configPath, serviceGroup.preserveComments(configPath, jsonText))
       log.info('保存 config.json 自定义配置文件成功:', configPath)
     } catch (e) {
       log.error('保存 config.json 自定义配置文件失败:', configPath, ', error:', e)
