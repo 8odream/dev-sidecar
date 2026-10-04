@@ -32,9 +32,10 @@ const Plugin = function (context) {
         `git config --global https.proxy http://${ip}:${port} `,
       ]
 
-      if (config.get().plugin.git.setting.sslVerify === true) {
-        cmds.push('git config --global http.sslVerify false ')
-      }
+      // 每次启动都显式同步 Git 的校验状态，避免只在首次勾选时写入配置。
+      // sslVerify 这个界面字段表示“关闭 sslVerify”，所以勾选时 Git 值应为 false。
+      const sslVerify = config.get().plugin.git.setting.sslVerify === true ? 'false' : 'true'
+      cmds.push(`git config --global http.sslVerify ${sslVerify} `)
 
       if (config.get().plugin.git.setting.noProxyUrls != null) {
         for (const url in config.get().plugin.git.setting.noProxyUrls) {
@@ -58,11 +59,9 @@ const Plugin = function (context) {
       } catch {
       }
 
-      if (config.get().plugin.git.setting.sslVerify === true) {
-        try {
-          await shell.exec(['git config --global --unset http.sslVerify '], { type: 'cmd' })
-        } catch {
-        }
+      try {
+        await shell.exec(['git config --global --unset http.sslVerify '], { type: 'cmd' })
+      } catch {
       }
 
       if (config.get().plugin.git.setting.noProxyUrls != null) {
