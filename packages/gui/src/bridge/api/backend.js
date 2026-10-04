@@ -1,20 +1,21 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import DevSidecar from '@docmirror/dev-sidecar'
-import { app, ipcMain, shell } from 'electron'
+import DevSidecar from '@blue-frontier/dev-sidecar'
+import electron from '../../electron.js'
+const { app, ipcMain, shell } = electron
 import lodash from 'lodash'
-import jsonApi from '@docmirror/mitmproxy/src/json.js'
+import jsonApi from '@blue-frontier/mitmproxy/src/json.js'
 import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const pk = require('../../../package.json')
-import coreDefaultConfig from '@docmirror/dev-sidecar/src/config/index.js'
-import configLoader from '@docmirror/dev-sidecar/src/config/local-config-loader.js'
-import serviceGroup from '@docmirror/dev-sidecar/src/service-group.js'
+import coreDefaultConfig from '@blue-frontier/dev-sidecar/src/config/index.js'
+import configLoader from '@blue-frontier/dev-sidecar/src/config/local-config-loader.js'
+import serviceGroup from '@blue-frontier/dev-sidecar/src/service-group.js'
 import log from '../../utils/util.log.gui.js'
-import dateUtil from '@docmirror/dev-sidecar/src/utils/util.date.js'
+import dateUtil from '@blue-frontier/dev-sidecar/src/utils/util.date.js'
 
-const { configFromFiles } = coreDefaultConfig
+const { defaultConfig, configFromFiles } = coreDefaultConfig
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const mitmproxyPath = path.join(__dirname, '../mitmproxy.js')
@@ -60,7 +61,7 @@ const localApi = {
       const runtimeConfig = DevSidecar.api.config.get()
       const remoteConfig = lodash.get(runtimeConfig, 'app.remoteConfig') || {}
 
-      const internal = getMetaInfo(coreDefaultConfig, '')
+      const internal = getMetaInfo(defaultConfig, '')
       const sharedRemote = getMetaInfo(configLoader.getRemoteConfig(), '')
       const personalRemote = getMetaInfo(configLoader.getRemoteConfig('_personal'), '')
 

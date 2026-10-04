@@ -1,4 +1,4 @@
-import DevSidecar from '@docmirror/dev-sidecar'
+import DevSidecar from '@blue-frontier/dev-sidecar'
 
 async function setAutoStartForLinux (app, enable = true) {
   const path = app.getPath('exe')
@@ -20,7 +20,8 @@ EOF
 `
     await DevSidecar.api.shell.exec(cmd)
   } else {
-    const removeStart = 'sudo rm ~/.config/autostart/dev-sidecar.desktop -rf'
+    // ~/.config/autostart 是用户目录，无需 sudo
+    const removeStart = 'rm -rf ~/.config/autostart/dev-sidecar.desktop'
     await DevSidecar.api.shell.exec(removeStart)
   }
 }

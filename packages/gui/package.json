@@ -1,6 +1,6 @@
 {
-  "name": "@docmirror/dev-sidecar-gui",
-  "version": "2.2.1",
+  "name": "@blue-frontier/dev-sidecar-gui",
+  "version": "2.3.1",
   "private": false,
   "type": "module",
   "main": "src/background.js",
@@ -12,17 +12,20 @@
   "license": "MPL-2.0",
   "homepage": "https://github.com/docmirror/dev-sidecar",
   "scripts": {
+    "gen:tray-plugins": "node scripts/gen-tray-plugins.mjs",
     "serve": "pnpm exec vue-cli-service serve",
+    "prebuild": "node scripts/gen-tray-plugins.mjs && node ../../_script/sync-official-config.mjs",
     "build": "pnpm exec vue-cli-service build",
     "lint": "pnpm exec vue-cli-service lint",
+    "preelectron": "node scripts/gen-tray-plugins.mjs",
     "electron": "node ../../_script/electron-dev.mjs",
     "electron:build": "pnpm run build && pnpm exec electron-builder --config electron-builder.config.cjs",
     "postinstall": "node -e \"!process.env.CI && require('child_process').execSync('electron-builder install-app-deps', { stdio:'inherit' })\"",
     "postuninstall": "pnpm exec electron-builder install-app-deps"
   },
   "dependencies": {
-    "@docmirror/dev-sidecar": "workspace:*",
-    "@docmirror/mitmproxy": "workspace:*",
+    "@blue-frontier/dev-sidecar": "workspace:*",
+    "@blue-frontier/mitmproxy": "workspace:*",
     "@starknt/shutdown-handler-napi": "^0.0.3",
     "@starknt/shutdown-handler-napi-win32-x64-msvc": "^0.0.3",
     "@starknt/sysproxy": "^0.0.3",
