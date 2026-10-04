@@ -108,6 +108,20 @@ function arrayItemPath (path, value) {
 }
 
 /**
+ * 未加引号的键的首字符（json5 允许，如 `server:`、`intercepts:`）
+ */
+function isIdentifierStart (ch) {
+  return ch != null && /[a-z_$]/i.test(ch)
+}
+
+/**
+ * 未加引号的键的后续字符
+ */
+function isIdentifierChar (ch) {
+  return ch != null && /[\w$.-]/.test(ch)
+}
+
+/**
  * 解析配置文本里的 `//` 注释，得到「配置路径 → 组名」的映射
  *
  * @param text 配置文本（json5）
@@ -231,6 +245,35 @@ function parseCommentMap (text) {
       pendingKeyPath = null
       lineHasContent = true
       i++
+      continue
+    }
+
+    // 未加引号的键（json5 允许），如 `server:`、`intercepts:`
+    // 不识别它们会导致路径缺失层级，注释映射的键与配置项的实际路径对不上，分组全部失效
+    if (isIdentifierStart(ch)) {
+      let j = i
+      while (j < text.length && isIdentifierChar(text[j])) {
+        j++
+      }
+      const name = text.slice(i, j)
+      let k = j
+      while (k < text.length && (text[k] === ' ' || text[k] === '\t' || text[k] === '\r')) {
+        k++
+      }
+      if (text[k] === ':') {
+        const path = [...topPath(), name]
+        const pathKey = keyPath(topPath(), name)
+        lastPathKey = pathKey
+        pendingKeyPath = path
+        if (currentGroup != null) {
+          map.set(pathKey, currentGroup)
+        }
+        i = k + 1
+      } else {
+        // 不是键，跳过这段标识符
+        i = j
+      }
+      lineHasContent = true
       continue
     }
 

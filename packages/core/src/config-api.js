@@ -141,11 +141,14 @@ const configApi = {
     return '{}'
   },
   /**
-   * 保存自定义的 config
-   * @param newConfig
+   * 获取「默认配置」：内置默认配置 + 已启用的远程配置（共享远程配置、个人远程配置）
+   *
+   * 保存配置时以它作为差异基准；恢复默认时也以它为恢复目标。
+   * 否则远程配置中覆盖过的项，会被内置默认值写进 config.json，导致远程配置虽然拉取了却不生效。
+   *
+   * @returns {object} 合并了远程配置的默认配置（远程配置只读本地缓存文件，不发起网络请求）
    */
-  save (newConfig) {
-    // 对比默认config的异同
+  getDefaultConfigWithRemote () {
     const defConfig = configApi.cloneDefault()
 
     // 如果开启了远程配置，则读取远程配置，合并到默认配置中
@@ -157,6 +160,16 @@ const configApi = {
         mergeApi.doMerge(defConfig, configLoader.getRemoteConfig('_personal'))
       }
     }
+
+    return defConfig
+  },
+  /**
+   * 保存自定义的 config
+   * @param newConfig
+   */
+  save (newConfig) {
+    // 对比默认config的异同。启用远程配置时，默认配置为「内置 + 远程」
+    const defConfig = configApi.getDefaultConfigWithRemote()
 
     // 计算新配置与默认配置（启用远程配置时，含远程配置）的差异
     const diffConfig = mergeApi.doDiff(defConfig, newConfig)
@@ -258,12 +271,17 @@ const configApi = {
     }
   },
   resetDefault (key) {
+    // 恢复默认的目标与保存配置时的差异基准保持一致，即「内置 + 远程」
+    const defaultConfig = configApi.getDefaultConfigWithRemote()
     if (key) {
-      let value = lodash.get(defConfig, key)
+      let value = lodash.get(defaultConfig, key)
       value = lodash.cloneDeep(value)
+      // 去掉值为 null 的项（null 在合并时表示“删除该项”），避免把它们写回 config.json
+      mergeApi.deleteNullItems(value)
       lodash.set(configTarget, key, value)
     } else {
-      configTarget = lodash.cloneDeep(defConfig)
+      configTarget = lodash.cloneDeep(defaultConfig)
+      mergeApi.deleteNullItems(configTarget)
     }
     return configTarget
   },

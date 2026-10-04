@@ -141,7 +141,10 @@ export default {
     },
     async openLog () {
       const dir = await this.$api.info.getLogDir()
-      this.$api.ipc.openPath(dir)
+      const errMsg = await this.$api.shell.openPath(dir)
+      if (errMsg) {
+        this.$message.error(`打开日志目录失败：${errMsg}`)
+      }
     },
     async focusFirst (ref) {
       if (ref && ref.length != null) {

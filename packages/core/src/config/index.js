@@ -23,7 +23,7 @@ const defaultConfig = {
     remoteConfig: {
       enabled: true,
       // 共享远程配置地址
-      url: 'https://raw.giteeusercontent.com/wangliang181230/dev-sidecar-config/raw/main/remote_config.json',
+      url: 'https://ds-official-config.bestar.de5.net/remote_config.json5',
       // 个人远程配置地址
       personalUrl: '',
     },
