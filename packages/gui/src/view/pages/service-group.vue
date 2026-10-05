@@ -737,7 +737,7 @@ export default defineComponent({
   align-items: center;
   margin-bottom: 8px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-color);
 
   .group-title {
     font-weight: 600;
@@ -750,7 +750,7 @@ export default defineComponent({
   }
   .group-count {
     margin-left: 8px;
-    color: #999;
+    color: var(--text-tertiary);
     font-size: 12px;
   }
   .group-actions {
@@ -762,10 +762,10 @@ export default defineComponent({
   }
 }
 .service-card {
-  border: 1px solid #f0f0f0;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 6px 8px;
-  background-color: #fafafa;
+  background-color: var(--card-bg);
   height: 100%;
 
   &.service-off {
@@ -807,7 +807,7 @@ export default defineComponent({
   line-height: 16px;
 }
 .legend-desc {
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 .source-user {
@@ -829,7 +829,7 @@ export default defineComponent({
     color: #52c41a;
   }
   .reset-value {
-    background-color: #f5f5f5;
+    background-color: var(--code-block-bg);
     border-radius: 4px;
     padding: 6px 8px;
     margin-bottom: 10px;
@@ -841,7 +841,7 @@ export default defineComponent({
     word-break: break-all;
   }
   .reset-tip {
-    color: #999;
+    color: var(--text-tertiary);
     margin-top: 8px;
   }
   .reset-warn {

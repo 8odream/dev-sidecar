@@ -318,7 +318,7 @@ export default defineComponent({
     submitNat64Domains () {
       const nat64Config = this.getNat64Config()
       nat64Config.domains = this.toDomains(this.nat64Domains)
-      nat64Config.prefix = (nat64Config.prefix || '').trim() || '2a01:4f8:c2c:123f:64:5::'
+      nat64Config.prefix = (nat64Config.prefix || '').trim()
     },
 
     // TLS版本设置
@@ -849,12 +849,7 @@ export default defineComponent({
           <div v-if="activeTabKey === '12'" style="padding-right:10px">
             <a-alert
               type="info"
-              message="NAT64 会把域名解析出的真实IPv4地址嵌入一个IPv6前缀，通过IPv6网络直连该站点（IPv6/IPv4 转换由公共NAT64网关完成）。"
-            />
-            <a-alert
-              type="warning"
-              style="margin-top:5px"
-              message="适用场景：本网络的DNS被投毒、或直连（含DoH）被阻断导致拿不到真实IP时，仍能解析并连接；公共NAT64网关的出口通常在境外，可同时绕过SNI阻断与源站的地区封锁。名单中的域名会被自动拦截（无需再配置拦截器）、跳过增强模式、忽略SNI改写与预设IP，并按ECH域名处理（需配合ECH使用，SNI被加密后中间网络才无法按域名重置连接）。"
+              message="NAT64 会把域名解析出的真实IPv4地址嵌入一个IPv6前缀，通过IPv6网络访问该站点。"
             />
             <a-form-item label="启用NAT64" :label-col="labelCol" :wrapper-col="wrapperCol">
               <a-checkbox v-model:checked="getNat64Config().enabled">
@@ -865,9 +860,9 @@ export default defineComponent({
               </div>
             </a-form-item>
             <a-form-item label="NAT64前缀" :label-col="labelCol" :wrapper-col="wrapperCol">
-              <a-input v-model:value="getNat64Config().prefix" style="width: 320px" spellcheck="false" placeholder="2a01:4f8:c2c:123f:64:5::" />
+              <a-input v-model:value="getNat64Config().prefix" style="width: 320px" spellcheck="false" placeholder="请输入NAT64服务提供的IPv6前缀" />
               <div class="form-help">
-                IPv6前缀，域名的真实IPv4会被嵌入到最末32位（默认是公共NAT64网关 <code>2a01:4f8:c2c:123f:64:5::</code>，可按需替换为其它NAT64服务）
+                IPv6前缀，域名的真实IPv4会被嵌入到最末32位；请填写所使用的NAT64服务提供的前缀
               </div>
             </a-form-item>
             <a-form-item label="解析用DNS" :label-col="labelCol" :wrapper-col="wrapperCol">
@@ -1109,7 +1104,7 @@ export default defineComponent({
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px;
-  background-color: #fafafa;
+  background-color: var(--bg-secondary);
   border-radius: 4px;
   margin-top: 8px;
   max-width: 100%;
@@ -1119,11 +1114,11 @@ export default defineComponent({
   display: flex;
   align-items: center;
   padding: 4px 8px;
-  background-color: #fff;
-  border: 1px solid #e8e8e8;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
   word-break: break-all;
   max-width: calc(100% - 16px);
   flex: 1 1 auto;
@@ -1152,10 +1147,10 @@ export default defineComponent({
 .domain-box {
   margin-bottom: 16px;
   padding: 12px;
-  background-color: #fff;
-  border: 1px solid #e8e8e8;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 8px var(--shadow-color);
   overflow: hidden;
 }
 .domain-box .domain-header {
@@ -1167,7 +1162,7 @@ export default defineComponent({
 .domain-box .domain-title {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-primary);
   margin: 0;
   flex: 1;
   min-width: 0;
