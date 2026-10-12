@@ -13,6 +13,7 @@ import coreDefaultConfig from '@blue-frontier/dev-sidecar/src/config/index.js'
 import configLoader from '@blue-frontier/dev-sidecar/src/config/local-config-loader.js'
 import serviceGroup from '@blue-frontier/dev-sidecar/src/service-group.js'
 import log from '../../utils/util.log.gui.js'
+import { diagnosticsApi as backendDiagnostics } from '../diagnostics/backend.js'
 import dateUtil from '@blue-frontier/dev-sidecar/src/utils/util.date.js'
 
 const { defaultConfig, configFromFiles } = coreDefaultConfig
@@ -390,6 +391,16 @@ export default {
     DevSidecar.api.event.register('traffic', (event) => {
       if (win) {
         win.webContents.send('traffic', event)
+      }
+    })
+    DevSidecar.api.event.register('diagnostics', (event) => {
+      const sessionId = event && event.sessionId
+      const entry = backendDiagnostics.record(sessionId, {
+        source: 'proxy',
+        ...event,
+      })
+      if (win && entry) {
+        win.webContents.send('diagnostics', entry)
       }
     })
 

@@ -134,7 +134,17 @@ function install (app, api) {
   // }
 
   async function downloadNewVersion (value) {
-    const platform = await api.info.getSystemPlatform()
+    let platform
+    try {
+      platform = await api.info.getSystemPlatform()
+    } catch (e) {
+      updateParams.downloading = false
+      updateParams.checking = false
+      console.error('获取系统平台失败，无法自动下载更新包:', e)
+      app.config.globalProperties.$message.error(`无法自动下载：获取系统平台失败（${(e && e.message) || e}），请手动到 GitHub Releases 下载`)
+      openGithubUrl()
+      return
+    }
     console.log(`download new version: ${JSON.stringify(value)}, platform: ${platform}`)
     if (platform === 'linux' && !value.fullPackage) {
       goManualUpdate(value)
@@ -157,7 +167,13 @@ function install (app, api) {
 
     if (updateParams.autoDownload !== false) {
       app.config.globalProperties.$message.info('发现新版本，正在下载中...')
-      downloadNewVersion(value)
+      downloadNewVersion(value).catch((e) => {
+        // 下载入口兜底：异常可见，并复位状态，允许重试。
+        updateParams.downloading = false
+        updateParams.checking = false
+        console.error('自动下载更新包失败:', e)
+        app.config.globalProperties.$message.error(`自动下载失败：${(e && e.message) || e}，请手动到 GitHub Releases 下载`)
+      })
       return
     }
 
@@ -212,7 +228,13 @@ function install (app, api) {
       },
       onOk () {
         if (hasPartPackage || hasFullPackage) {
-          downloadNewVersion(value)
+          downloadNewVersion(value).catch((e) => {
+            // 下载入口兜底：异常可见，并复位状态，允许重试。
+            updateParams.downloading = false
+            updateParams.checking = false
+            console.error('自动下载更新包失败:', e)
+            app.config.globalProperties.$message.error(`自动下载失败：${(e && e.message) || e}，请手动到 GitHub Releases 下载`)
+          })
         } else {
           openGithubUrl()
         }

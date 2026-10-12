@@ -34,6 +34,7 @@ export default defineComponent({
       nat64Domains: [],
       tlsMappings: [],
       speedRefreshInterval: null,
+      speedListener: null,
       tlsVersionOptions: [
         {
           label: 'TLS 1.2',
@@ -102,8 +103,9 @@ export default defineComponent({
   },
 
   beforeUnmount () {
-    // 清理事件监听器
-    this.$api.ipc.removeAllListeners('speed')
+    // 只移除本页面注册的监听器，避免影响其他页面。
+    if (this.speedListener)
+      this.$api.ipc.removeListener('speed', this.speedListener)
     if (this.speedRefreshInterval) {
       clearInterval(this.speedRefreshInterval)
     }
@@ -464,7 +466,8 @@ export default defineComponent({
           this.speedTestList = validatedData
         }
       }
-      this.$api.ipc.on('speed', listener)
+      this.speedListener = listener
+      this.$api.ipc.on('speed', this.speedListener)
       this.speedRefreshInterval = this.startSpeedRefreshInterval()
       this.reloadAllSpeedTester()
     },

@@ -3,6 +3,7 @@ import autoStart from './auto-start/backend.js'
 import fileSelector from './file-selector/backend.js'
 import tongji from './tongji/backend.js'
 import update from './update/backend.js'
+import diagnostics from './diagnostics/backend.js'
 import log from '../utils/util.log.gui.js'
 
 const modules = {
@@ -11,6 +12,7 @@ const modules = {
   tongji, // 统计模块
   update, // 自动更新
   autoStart,
+  diagnostics,
 }
 export default {
   install (context) {

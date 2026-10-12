@@ -1,4 +1,5 @@
 import lodash from 'lodash'
+import { ipcRenderer } from 'electron'
 import DsContainer from '../components/container'
 
 export default {
@@ -15,10 +16,23 @@ export default {
       resetDefaultLoading: false,
       applyLoading: false,
       systemPlatform: '',
+      // 只读页面可开启；编辑页面保持关闭，避免覆盖未保存的内容。
+      autoReloadConfigOnChange: false,
+      configChangedHandler: null,
     }
   },
   created () {
     this.init()
+    if (this.autoReloadConfigOnChange === true) {
+      this.configChangedHandler = () => this.refreshConfigOnChange()
+      ipcRenderer.on('config.changed', this.configChangedHandler)
+    }
+  },
+  unmounted () {
+    if (this.configChangedHandler) {
+      ipcRenderer.removeListener('config.changed', this.configChangedHandler)
+      this.configChangedHandler = null
+    }
   },
   mounted () {
   },
@@ -116,6 +130,17 @@ export default {
     async reloadConfig () {
       const config = await this.$api.config.reload()
       this.setConfig(config)
+    },
+    async refreshConfigOnChange () {
+      try {
+        // 仅 get；reload 会再次广播 config.changed，造成循环。
+        const config = await this.$api.config.get()
+        if (config) {
+          this.setConfig(config)
+        }
+      } catch (e) {
+        console.error('配置变更后刷新本页配置失败（不影响使用）:', e)
+      }
     },
     async reloadConfigAndRestart () {
       if (this.$api.plugin.git.isEnabled()) {

@@ -255,6 +255,12 @@ function replaceBlock (source, block) {
 }
 
 async function main () {
+  // 构建隔离：GUI 的 prebuild 会调用本脚本，成功时会就地改写受版本控制的 index.js。
+  // 设置 DS_SKIP_OFFICIAL_CONFIG_SYNC=1 可完全跳过（不联网、不写文件），用于可复现的隔离构建/测试。
+  if (/^(?:1|true|yes)$/i.test(process.env.DS_SKIP_OFFICIAL_CONFIG_SYNC || '')) {
+    log('DS_SKIP_OFFICIAL_CONFIG_SYNC=1：跳过官方配置同步，保留现有内置配置。')
+    return
+  }
   const indexJs = findIndexJs()
   const source = fs.readFileSync(indexJs, 'utf-8')
   const url = pickRemoteConfigUrl(source)

@@ -507,6 +507,7 @@ function createWindow (startHideWindow, autoQuitIfError = true) {
         enableRemoteModule: true,
         contextIsolation: false,
         nativeWindowOpen: true, // ADD THIS
+        webviewTag: true,
         // Use pluginOptions.nodeIntegration, leave this alone
         // See nklayman.github.io/vue-cli-plugin-electron-builder/guide/security.html#node-integration for more info
         nodeIntegration: true, // process.env.ELECTRON_NODE_INTEGRATION

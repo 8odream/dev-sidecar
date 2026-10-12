@@ -29,7 +29,15 @@ export function apiInit (app) {
       removeAllListeners (channel) {
         ipcRenderer.removeAllListeners(channel)
       },
+      removeListener (channel, callback) {
+        ipcRenderer.removeListener(channel, callback)
+      },
       invoke,
+      // Direct Electron IPC for feature-specific channels; `invoke` above
+      // dispatches through the backend API method registry.
+      invokeChannel (channel, message) {
+        return ipcRenderer.invoke(channel, message)
+      },
       postMessage (channel, ...args) {
         ipcRenderer.postMessage(channel, ...args)
       },
