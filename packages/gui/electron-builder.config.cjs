@@ -45,7 +45,14 @@ module.exports = {
       ],
     },
     'src/**/*',
-    'package.json',
+    // 本机编译原生模块可能产生 MSVC 调试/增量链接文件，运行时不需要。
+    '!**/*.iobj',
+    '!**/*.ipdb',
+    '!**/*.pdb',
+    '!**/*.ilk',
+    '!**/*.exp',
+    '!**/*.lib',
+    'package.json'
     // extra/ 在 extraResources 中已复制，此处不需要再打包进 asar
   ],
   extraResources: [

@@ -62,14 +62,24 @@ const localApi = {
       const runtimeConfig = DevSidecar.api.config.get()
       const remoteConfig = lodash.get(runtimeConfig, 'app.remoteConfig') || {}
 
-      const internal = getMetaInfo(defaultConfig, '')
+      const internal = getMetaInfo(defaultConfig, 'internal')
+      const user = getMetaInfo(configLoader.getUserConfig(), '')
       const sharedRemote = getMetaInfo(configLoader.getRemoteConfig(), '')
       const personalRemote = getMetaInfo(configLoader.getRemoteConfig('_personal'), '')
+      const selection = configLoader.getRemoteSelection()
+      const history = configLoader.getRemoteConfigVersions('')
+      const personalHistory = configLoader.getRemoteConfigVersions('_personal')
+      // 选择记录可能指向已被删除的历史快照，这种情况下实际生效的是 live 文件，
+      // 选择器应回落到「最新版本」，而不是显示一个列表里不存在的值。
+      const normalizeSelected = (list, selected) => {
+        return selected && list.some(item => item.version === selected) ? selected : ''
+      }
 
       return {
         version: pk.version,
         configProfiles: {
           internal,
+          user,
           sharedRemote: {
             ...sharedRemote,
             url: remoteConfig.url || '',
@@ -80,6 +90,11 @@ const localApi = {
             url: remoteConfig.personalUrl || '',
             enabled: remoteConfig.enabled === true && Boolean(remoteConfig.personalUrl),
           },
+          selectedVersion: normalizeSelected(history, selection.shared),
+          // core 的 setRemoteSelection 用 suffix 作为键：共享是 shared，个人是 _personal。
+          personalSelectedVersion: normalizeSelected(personalHistory, selection._personal),
+          history,
+          personalHistory,
         },
       }
     },
@@ -164,6 +179,23 @@ const localApi = {
     },
     resetDefault (key) {
       const result = DevSidecar.api.config.resetDefault(key)
+      emitConfigChanged()
+      return result
+    },
+    getRemoteConfigVersions (suffix = '') {
+      return DevSidecar.api.config.getRemoteConfigVersions(suffix)
+    },
+    /**
+     * 切换远程配置版本。
+     *
+     * 注意：动态 api 桥接（ipcMain apiInvoke → invoke）只向目标方法传一个参数，
+     * 因此这里必须收一个 options 对象，不能写成 (suffix, version) 两个位置参数，
+     * 否则 version 会永远丢失，表现为「选择版本后没有生效」。
+     */
+    setRemoteConfigVersion (options = {}) {
+      const suffix = options?.suffix || ''
+      const version = options?.version || ''
+      const result = DevSidecar.api.config.setRemoteConfigVersion(suffix, version)
       emitConfigChanged()
       return result
     },

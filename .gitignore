@@ -26,3 +26,11 @@ packages/cli/.nyc_output
 .claude
 .workbuddy-ai/
 atlas.facets.json
+
+# Local build caches / packaged artifacts (Codex, electron-builder, pnpm)
+.codex-build-store/
+dist_electron/
+dist_electron_config_test/
+dist_electron_squirrel_unscoped/
+packages/gui/dist/
+.pnpm-store/

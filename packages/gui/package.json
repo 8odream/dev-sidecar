@@ -1,6 +1,6 @@
 {
   "name": "@blue-frontier/dev-sidecar-gui",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "private": false,
   "type": "module",
   "main": "src/background.js",
@@ -20,6 +20,8 @@
     "preelectron": "node scripts/gen-tray-plugins.mjs",
     "electron": "node ../../_script/electron-dev.mjs",
     "electron:build": "pnpm run build && pnpm exec electron-builder --config electron-builder.config.cjs",
+    "electron:build:local": "node scripts/local-build-version.mjs",
+    "version:local": "node scripts/local-build-version.mjs --print",
     "postinstall": "node -e \"!process.env.CI && require('child_process').execSync('electron-builder install-app-deps', { stdio:'inherit' })\"",
     "postuninstall": "pnpm exec electron-builder install-app-deps"
   },
@@ -34,6 +36,7 @@
     "adm-zip": "^0.5.17",
     "ant-design-vue": "^4.2.6",
     "archiver": "^7.0.1",
+    "request": "^2.88.2",
     "core-js": "^3.49.0",
     "electron-baidu-tongji": "^1.0.5",
     "electron-updater": "^6.8.3",
@@ -46,7 +49,8 @@
     "sass-loader": "^16.0.7",
     "tiny-emitter": "^2.1.0",
     "vue": "^3.5.33",
-    "vue-router": "^4.6.4"
+    "vue-router": "^4.6.4",
+    "@ant-design/icons-vue": "^7.0.1"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
@@ -58,8 +62,8 @@
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron": "^41.3.0",
-    "electron-builder": "^26.8.1",
-    "electron-builder-squirrel-windows": "26.8.1",
+    "electron-builder": "^26.17.0",
+    "electron-builder-squirrel-windows": "26.17.0",
     "json5-loader": "^4.0.1",
     "path-browserify": "^1.0.1",
     "wait-on": "^7.2.0"
