@@ -159,12 +159,12 @@ jobs:
       - name: "test packages/core"
         run: |
           cd packages/core;
-          pnpm run test;
+          "${PNPM_HOME}/pnpm" run test;
 
       - name: "test packages/mitmproxy"
         run: |
           cd packages/mitmproxy;
-          pnpm run test;
+          "${PNPM_HOME}/pnpm" run test;
 
       - name: "Cache Flatpak runtime (Linux)"
         if: ${{ matrix.os == 'ubuntu' }}
