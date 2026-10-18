@@ -24,4 +24,7 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+  keytar: true
+  # koffi 使用平台预编译包；禁用主包源码构建，避免本机没有 CMake 时安装失败。
+  koffi: false
   unrs-resolver: true

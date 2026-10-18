@@ -7,6 +7,8 @@ if (publishUrl) {
 }
 
 module.exports = defineConfig({
+  // 关闭 thread-loader，避免 Windows 上 vue-loader 对当前 SFC 的偶发 null.content 崩溃
+  parallel: false,
   outputDir: 'dist',
   publicPath: './',
   pages: {

@@ -29,8 +29,12 @@ export default defineComponent({
       dnsMappings: [],
       speedTestList: [],
       whiteList: [],
+      echDomains: [],
+      echPreSetIpDomains: [],
+      nat64Domains: [],
       tlsMappings: [],
       speedRefreshInterval: null,
+      speedListener: null,
       tlsVersionOptions: [
         {
           label: 'TLS 1.2',
@@ -99,8 +103,9 @@ export default defineComponent({
   },
 
   beforeUnmount () {
-    // 清理事件监听器
-    this.$api.ipc.removeAllListeners('speed')
+    // 只移除本页面注册的监听器，避免影响其他页面。
+    if (this.speedListener)
+      this.$api.ipc.removeListener('speed', this.speedListener)
     if (this.speedRefreshInterval) {
       clearInterval(this.speedRefreshInterval)
     }
@@ -122,6 +127,9 @@ export default defineComponent({
     ready () {
       this.initDnsMapping()
       this.initWhiteList()
+      this.initEchDomains()
+      this.initEchPreSetIpDomains()
+      this.initNat64Domains()
       this.initTlsMappings()
       this.initCfRouteDomains()
       if (this.config.server.dns.speedTest.dnsProviders) {
@@ -131,6 +139,9 @@ export default defineComponent({
     async applyBefore () {
       this.submitDnsMappings()
       this.submitWhiteList()
+      this.submitEchDomains()
+      this.submitEchPreSetIpDomains()
+      this.submitNat64Domains()
       this.submitTlsMappings()
       this.submitCfRouteDomains()
       this.delEmptySpeedHostname()
@@ -216,6 +227,100 @@ export default defineComponent({
         }
       }
       this.config.server.whiteList = whiteList
+    },
+
+    // ECH（Encrypted Client Hello）
+    getEchConfig () {
+      const dns = this.config.server.dns || (this.config.server.dns = {})
+      return dns.ech || (dns.ech = {})
+    },
+    // 把配置里的域名列表转成表格行（兼容数组与对象两种写法）
+    toDomainRows (domains) {
+      const rows = []
+      if (Array.isArray(domains)) {
+        for (const domain of domains) {
+          if (typeof domain === 'string' && domain) {
+            rows.push({ key: domain })
+          }
+        }
+      } else if (domains != null && typeof domains === 'object') {
+        // 兼容对象写法： { 'example.com': true }
+        for (const key in domains) {
+          if (domains[key] !== false && domains[key] != null) {
+            rows.push({ key })
+          }
+        }
+      }
+      return rows
+    },
+    toDomains (rows) {
+      const domains = []
+      for (const item of rows) {
+        if (item.key) {
+          const hostname = this.handleHostname(item.key)
+          if (hostname && !domains.includes(hostname)) {
+            domains.push(hostname)
+          }
+        }
+      }
+      return domains
+    },
+    initEchDomains () {
+      this.echDomains = this.toDomainRows(this.getEchConfig().domains)
+    },
+    addEchDomain () {
+      this.echDomains.unshift({ key: '' })
+      this.focusFirst(this.$refs.echDomains)
+    },
+    deleteEchDomain (item, index) {
+      this.echDomains.splice(index, 1)
+    },
+    initEchPreSetIpDomains () {
+      this.echPreSetIpDomains = this.toDomainRows(this.getEchConfig().preSetIpDomains)
+    },
+    addEchPreSetIpDomain () {
+      this.echPreSetIpDomains.unshift({ key: '' })
+      this.focusFirst(this.$refs.echPreSetIpDomains)
+    },
+    deleteEchPreSetIpDomain (item, index) {
+      this.echPreSetIpDomains.splice(index, 1)
+    },
+    submitEchDomains () {
+      const echConfig = this.getEchConfig()
+      echConfig.domains = this.toDomains(this.echDomains)
+      // 未选择ECH专用DNS时，归一化为空字符串（与默认配置保持一致，便于差分保存）
+      echConfig.dns = echConfig.dns || ''
+      // 共享ECH配置的来源域名：去掉空格与协议前缀
+      echConfig.publicName = (echConfig.publicName || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    },
+    submitEchPreSetIpDomains () {
+      this.getEchConfig().preSetIpDomains = this.toDomains(this.echPreSetIpDomains)
+    },
+
+    // NAT64（把真实IPv4嵌入NAT64前缀，走IPv6直连）
+    getNat64Config () {
+      const dns = this.config.server.dns || (this.config.server.dns = {})
+      return dns.nat64 || (dns.nat64 = {})
+    },
+    initNat64Domains () {
+      const nat64Config = this.getNat64Config()
+      if (nat64Config.dns == null) {
+        // 「解析用DNS」与「ECH专用DNS」一致：空表示不指定
+        nat64Config.dns = ''
+      }
+      this.nat64Domains = this.toDomainRows(nat64Config.domains)
+    },
+    addNat64Domain () {
+      this.nat64Domains.unshift({ key: '' })
+      this.focusFirst(this.$refs.nat64Domains)
+    },
+    deleteNat64Domain (item, index) {
+      this.nat64Domains.splice(index, 1)
+    },
+    submitNat64Domains () {
+      const nat64Config = this.getNat64Config()
+      nat64Config.domains = this.toDomains(this.nat64Domains)
+      nat64Config.prefix = (nat64Config.prefix || '').trim()
     },
 
     // TLS版本设置
@@ -361,7 +466,8 @@ export default defineComponent({
           this.speedTestList = validatedData
         }
       }
-      this.$api.ipc.on('speed', listener)
+      this.speedListener = listener
+      this.$api.ipc.on('speed', this.speedListener)
       this.speedRefreshInterval = this.startSpeedRefreshInterval()
       this.reloadAllSpeedTester()
     },
@@ -629,6 +735,179 @@ export default defineComponent({
             </a-row>
           </div>
         </a-tab-pane>
+        <a-tab-pane key="11" tab="ECH设置">
+          <div v-if="activeTabKey === '11'" style="padding-right:10px">
+            <a-alert
+              type="info"
+              message="ECH（Encrypted Client Hello）会把TLS握手中的SNI加密，使中间网络无法看到你访问的真实域名。只有目标网站支持ECH（其DNS下发了HTTPS记录）时才会生效，任何一步失败都会自动降级为普通TLS，不影响访问。"
+            />
+            <a-alert
+              type="warning"
+              style="margin-top:5px"
+              message="名单中的域名会被自动拦截（无需再配置拦截器），并强制忽略修改SNI等配置：上游TLS握手固定使用真实SNI，避免ECH因SNI被改写而失效；IP解析优先使用「ECH专用DNS」，解析不出可用IP时才回退「IP预设置」里的预设IP（可在下方指定强制使用预设IP的域名）；IP测速结果默认不使用。"
+            />
+            <a-form-item label="启用ECH" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-checkbox v-model:checked="getEchConfig().enabled">
+                从DNS的HTTPS记录获取ECH参数
+              </a-checkbox>
+              <div class="form-help">
+                关闭后不再查询ECH参数，也不使用ECH
+              </div>
+            </a-form-item>
+            <a-form-item label="ECH专用DNS" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-select v-model:value="getEchConfig().dns" style="width: 260px" placeholder="不指定">
+                <a-select-option value="">
+                  不指定（由域名映射或系统DNS决定）
+                </a-select-option>
+                <a-select-option v-for="item of speedDnsOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-select-option>
+              </a-select>
+              <div class="form-help">
+                从上方「DNS服务管理」中选择一个DNS，名单中的域名优先从该DNS获取ECH参数与IP解析结果（不再使用其它DNS），查询更快也更准确；该DNS解析不出可用IP时，会回退到「IP预设置」里的预设IP；已在下方开例外的域名则直接使用预设IP
+              </div>
+            </a-form-item>
+            <a-form-item label="共享ECH配置" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input v-model:value="getEchConfig().publicName" style="width: 260px" spellcheck="false" placeholder="cloudflare-ech.com" />
+              <div class="form-help">
+                域名自己没有下发ECH记录时，用该域名的ECH配置兜底（默认<code>cloudflare-ech.com</code>，Cloudflare 的共享配置对所有 Cloudflare 站点通用，例如 character.ai 这类站点就是靠它启用ECH）；留空表示不使用兜底
+              </div>
+            </a-form-item>
+            <a-form-item label="上游使用ECH" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-checkbox v-model:checked="getEchConfig().use">
+                在「代理 ➜ 源站」的TLS握手中使用ECH
+              </a-checkbox>
+              <div class="form-help">
+                关闭后只查询ECH参数，但不使用
+              </div>
+            </a-form-item>
+            <a-form-item label="尝试其它DNS" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-checkbox v-model:checked="getEchConfig().tryAllProviders">
+                映射DNS未下发时，尝试其它DNS
+              </a-checkbox>
+              <div class="form-help">
+                未指定「ECH专用DNS」时：域名映射到的DNS未下发ECH参数时，自动尝试其它DNS
+              </div>
+            </a-form-item>
+            <a-form-item label="并发查询延迟" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input-number v-model:value="getEchConfig().parallelDelay" :min="0" :step="50" :precision="0" spellcheck="false" /> ms
+              <div class="form-help">
+                并发查询多个DNS时，除第一个DNS外的其它DNS的延迟启动时间，设为<code>0</code>表示全部同时查询；指定「ECH专用DNS」后不再并发查询
+              </div>
+            </a-form-item>
+            <hr>
+            <a-row style="margin-top:10px">
+              <a-col span="21">
+                <div>需要使用<code>ECH</code>的域名<span class="form-help">（域名配置可使用通配符或正则，填法与“域名白名单”一致；名单为空表示不启用，此时不会有任何额外开销）</span></div>
+              </a-col>
+              <a-col span="3">
+                <a-button style="margin-left:8px" type="primary" @click="addEchDomain()"><PlusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <a-row v-for="(item, index) of echDomains" ref="echDomains" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="21">
+                <a-input v-model:value="item.key" spellcheck="false" placeholder="例如 crypto.cloudflare.com 或 *.cloudflare.com" />
+              </a-col>
+              <a-col :span="3">
+                <a-button type="danger" @click="deleteEchDomain(item, index)"><MinusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <hr>
+            <a-row style="margin-top:10px">
+              <a-col span="21">
+                <div>其中<code>强制使用预设IP</code>的域名<span class="form-help">（ECH域名默认优先用「ECH专用DNS」解析，解析不出可用IP时才回退到「IP预设置」；这里填写的域名例外，直接使用预设IP、跳过「ECH专用DNS」的解析——适合预设IP比DNS解析结果更可靠、或该域名解析不稳定的情况，填法与上方一致）</span></div>
+              </a-col>
+              <a-col span="3">
+                <a-button style="margin-left:8px" type="primary" @click="addEchPreSetIpDomain()"><PlusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <a-row v-for="(item, index) of echPreSetIpDomains" ref="echPreSetIpDomains" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="21">
+                <a-input v-model:value="item.key" spellcheck="false" placeholder="例如 character.ai" />
+              </a-col>
+              <a-col :span="3">
+                <a-button type="danger" @click="deleteEchPreSetIpDomain(item, index)"><MinusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <hr>
+            <div>缓存设置：<span class="form-help">（从一个域名的HTTPS记录中获取到的ECH参数会被缓存，避免每次访问都查询DNS）</span></div>
+            <a-form-item label="缓存条数" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input-number v-model:value="getEchConfig().cacheSize" :min="0" :precision="0" spellcheck="false" />
+            </a-form-item>
+            <a-form-item label="无ECH缓存" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input-number v-model:value="getEchConfig().emptyTtl" :min="0" :step="60000" :precision="0" spellcheck="false" /> ms
+              <div class="form-help">
+                DNS未下发ECH参数时的缓存时间
+              </div>
+            </a-form-item>
+            <a-form-item label="最短缓存" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input-number v-model:value="getEchConfig().minTtl" :min="0" :step="60000" :precision="0" spellcheck="false" /> ms
+            </a-form-item>
+            <a-form-item label="最长缓存" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input-number v-model:value="getEchConfig().maxTtl" :min="0" :step="60000" :precision="0" spellcheck="false" /> ms
+            </a-form-item>
+          </div>
+        </a-tab-pane>
+        <a-tab-pane key="12" tab="NAT64直连">
+          <div v-if="activeTabKey === '12'" style="padding-right:10px">
+            <a-alert
+              type="info"
+              message="NAT64 会把域名解析出的真实IPv4地址嵌入一个IPv6前缀，通过IPv6网络访问该站点。"
+            />
+            <a-form-item label="启用NAT64" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-checkbox v-model:checked="getNat64Config().enabled">
+                通过NAT64直连名单中的域名
+              </a-checkbox>
+              <div class="form-help">
+                是否可用取决于所在网络能否访问下面的NAT64前缀；不可用时会自动回退为普通解析，不影响其它域名
+              </div>
+            </a-form-item>
+            <a-form-item label="NAT64前缀" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input v-model:value="getNat64Config().prefix" style="width: 320px" spellcheck="false" placeholder="请输入NAT64服务提供的IPv6前缀" />
+              <div class="form-help">
+                IPv6前缀，域名的真实IPv4会被嵌入到最末32位；请填写所使用的NAT64服务提供的前缀
+              </div>
+            </a-form-item>
+            <a-form-item label="解析用DNS" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-select v-model:value="getNat64Config().dns" style="width: 260px" placeholder="不指定">
+                <a-select-option value="">
+                  不指定（自动使用内置的公共DoH）
+                </a-select-option>
+                <a-select-option v-for="item of speedDnsOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </a-select-option>
+              </a-select>
+              <div class="form-help">
+                从上方「DNS服务管理」中选择一个DNS（<b>需为DoH类型，即地址以 <code>https://</code> 开头</b>），
+                域名的真实A记录与ECH参数都<b>经NAT64通道</b>向它查询（所以即使本机DNS被投毒也能拿到真实IP）；
+                该DNS不可用时会自动回退到内置的公共DoH（<code>dns.alidns.com</code>、<code>cloudflare-dns.com</code>、<code>dns.google</code>）
+              </div>
+            </a-form-item>
+            <a-form-item label="A记录缓存" :label-col="labelCol" :wrapper-col="wrapperCol">
+              <a-input-number v-model:value="getNat64Config().cacheTtl" :min="0" :step="60000" :precision="0" spellcheck="false" /> ms
+              <div class="form-help">
+                真实A记录的缓存时间，避免每次解析都查询一次DoH
+              </div>
+            </a-form-item>
+            <hr>
+            <a-row style="margin-top:10px">
+              <a-col span="21">
+                <div>需要通过<code>NAT64</code>直连的域名<span class="form-help">（域名配置可使用通配符或正则，填法与“域名白名单”一致；名单为空表示不启用，此时不会有任何额外开销）</span></div>
+              </a-col>
+              <a-col span="3">
+                <a-button style="margin-left:8px" type="primary" @click="addNat64Domain()"><PlusOutlined /></a-button>
+              </a-col>
+            </a-row>
+            <a-row v-for="(item, index) of nat64Domains" ref="nat64Domains" :key="index" :gutter="10" style="margin-top: 5px">
+              <a-col :span="21">
+                <a-input v-model:value="item.key" spellcheck="false" placeholder="例如 chatgpt.com 或 *.openai.com" />
+              </a-col>
+              <a-col :span="3">
+                <a-button type="danger" @click="deleteNat64Domain(item, index)"><MinusOutlined /></a-button>
+              </a-col>
+            </a-row>
+          </div>
+        </a-tab-pane>
         <a-tab-pane key="9" tab="IP测速">
           <div v-if="activeTabKey === '9'" class="ip-tester" style="padding-right: 10px">
             <a-alert type="info" message="对从DNS获取到的IP进行测速，使用速度最快的IP进行访问（注意：对使用了增强功能的域名没啥用）" />
@@ -828,7 +1107,7 @@ export default defineComponent({
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px;
-  background-color: #fafafa;
+  background-color: var(--bg-secondary);
   border-radius: 4px;
   margin-top: 8px;
   max-width: 100%;
@@ -838,11 +1117,11 @@ export default defineComponent({
   display: flex;
   align-items: center;
   padding: 4px 8px;
-  background-color: #fff;
-  border: 1px solid #e8e8e8;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
   word-break: break-all;
   max-width: calc(100% - 16px);
   flex: 1 1 auto;
@@ -871,10 +1150,10 @@ export default defineComponent({
 .domain-box {
   margin-bottom: 16px;
   padding: 12px;
-  background-color: #fff;
-  border: 1px solid #e8e8e8;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
   border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 8px var(--shadow-color);
   overflow: hidden;
 }
 .domain-box .domain-header {
@@ -886,7 +1165,7 @@ export default defineComponent({
 .domain-box .domain-title {
   font-size: 14px;
   font-weight: 500;
-  color: #333;
+  color: var(--text-primary);
   margin: 0;
   flex: 1;
   min-width: 0;

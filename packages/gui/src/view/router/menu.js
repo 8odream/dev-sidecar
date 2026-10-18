@@ -1,17 +1,25 @@
+import { VERSION_3_FEATURE_ENABLED } from '../../version-3-feature.js'
+
 export default function createMenus (app) {
   const plugins = [
     { title: 'NPM加速', path: '/plugin/node', icon: 'like' },
     { title: 'Git.exe代理', path: '/plugin/git', icon: 'github' },
     { title: 'PIP加速', path: '/plugin/pip', icon: 'bulb' },
     { title: '网络检测', path: '/plugin/free-eye', icon: 'eye' },
+    { title: '网页诊断', path: '/plugin/web-diagnostics', icon: 'global' },
   ]
   const $global = app.$global || app.config?.globalProperties?.$global
   if ($global?.setting?.overwall) {
     plugins.push({ title: '增强功能', path: '/plugin/overwall', icon: 'global' })
+    // P2P 暂未发布，见 src/version-3-feature.js
+    if (VERSION_3_FEATURE_ENABLED) {
+      plugins.push({ title: '统一加速', path: '/plugin/p2p', icon: 'api' })
+    }
   }
   const menus = [
     { title: '首页', path: '/index', icon: 'home' },
     { title: '加速服务', path: '/server', icon: 'thunderbolt' },
+    { title: '服务分组', path: '/service-group', icon: 'cluster' },
     { title: '系统代理', path: '/proxy', icon: 'deployment-unit' },
     { title: '日志与流量', path: '/traffic', icon: 'fund' },
     { title: 'GitHub状态监控', path: '/github-status', icon: 'line-chart' },

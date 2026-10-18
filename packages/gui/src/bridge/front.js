@@ -5,6 +5,7 @@ import fileSelector from './file-selector/front'
 import onClose from './on-close/front'
 import tongji from './tongji/front'
 import update from './update/front'
+import diagnostics from './diagnostics/front'
 
 const modules = {
   // api, // 核心接口模块
@@ -14,6 +15,7 @@ const modules = {
   update, // 自动更新
   autoStart,
   onClose,
+  diagnostics,
 }
 export default {
   install (app, api, router) {

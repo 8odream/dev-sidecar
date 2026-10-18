@@ -66,7 +66,7 @@ export default defineComponent({
   },
 
   beforeUnmount () {
-    this.$api.ipc.removeAllListeners('traffic')
+    this.$api.ipc.removeListener('traffic', this.onTraffic)
   },
 
   methods: {

@@ -1,6 +1,5 @@
 import { ipcRenderer, shell } from 'electron'
 import lodash from 'lodash'
-import path from 'path'
 
 let inited = false
 let apiObj = null
@@ -30,7 +29,15 @@ export function apiInit (app) {
       removeAllListeners (channel) {
         ipcRenderer.removeAllListeners(channel)
       },
+      removeListener (channel, callback) {
+        ipcRenderer.removeListener(channel, callback)
+      },
       invoke,
+      // Direct Electron IPC for feature-specific channels; `invoke` above
+      // dispatches through the backend API method registry.
+      invokeChannel (channel, message) {
+        return ipcRenderer.invoke(channel, message)
+      },
       postMessage (channel, ...args) {
         ipcRenderer.postMessage(channel, ...args)
       },
@@ -39,7 +46,7 @@ export function apiInit (app) {
         await shell.openExternal(href)
       },
       openPath (file) {
-        shell.openPath(path.resolve(file))
+        return invoke('shell.openPath', file)
       },
     },
   }

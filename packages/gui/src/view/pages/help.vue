@@ -18,6 +18,8 @@ export default defineComponent({
   data () {
     return {
       key: 'help',
+      // 帮助内容来自远程配置 config.help.dataList；配置更新后重新读取。
+      autoReloadConfigOnChange: true,
     }
   },
 
@@ -39,7 +41,7 @@ export default defineComponent({
       <a-button class="mr10" @click="openLog()"><ProfileOutlined />查看日志</a-button>
     </template>
 
-    <div v-if="config" class="help-list">
+    <div v-if="config && config.help" class="help-list">
       <TreeNode :tree-data="config.help.dataList" />
     </div>
   </ds-container>

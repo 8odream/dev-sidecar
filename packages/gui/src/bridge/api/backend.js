@@ -1,19 +1,22 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import DevSidecar from '@docmirror/dev-sidecar'
-import { app, ipcMain, shell } from 'electron'
+import DevSidecar from '@blue-frontier/dev-sidecar'
+import electron from '../../electron.js'
+const { app, ipcMain, shell } = electron
 import lodash from 'lodash'
-import jsonApi from '@docmirror/mitmproxy/src/json.js'
+import jsonApi from '@blue-frontier/mitmproxy/src/json.js'
 import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const pk = require('../../../package.json')
-import coreDefaultConfig from '@docmirror/dev-sidecar/src/config/index.js'
-import configLoader from '@docmirror/dev-sidecar/src/config/local-config-loader.js'
+import coreDefaultConfig from '@blue-frontier/dev-sidecar/src/config/index.js'
+import configLoader from '@blue-frontier/dev-sidecar/src/config/local-config-loader.js'
+import serviceGroup from '@blue-frontier/dev-sidecar/src/service-group.js'
 import log from '../../utils/util.log.gui.js'
-import dateUtil from '@docmirror/dev-sidecar/src/utils/util.date.js'
+import { diagnosticsApi as backendDiagnostics } from '../diagnostics/backend.js'
+import dateUtil from '@blue-frontier/dev-sidecar/src/utils/util.date.js'
 
-const { configFromFiles } = coreDefaultConfig
+const { defaultConfig, configFromFiles } = coreDefaultConfig
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const mitmproxyPath = path.join(__dirname, '../mitmproxy.js')
@@ -59,14 +62,24 @@ const localApi = {
       const runtimeConfig = DevSidecar.api.config.get()
       const remoteConfig = lodash.get(runtimeConfig, 'app.remoteConfig') || {}
 
-      const internal = getMetaInfo(coreDefaultConfig, '')
+      const internal = getMetaInfo(defaultConfig, 'internal')
+      const user = getMetaInfo(configLoader.getUserConfig(), '')
       const sharedRemote = getMetaInfo(configLoader.getRemoteConfig(), '')
       const personalRemote = getMetaInfo(configLoader.getRemoteConfig('_personal'), '')
+      const selection = configLoader.getRemoteSelection()
+      const history = configLoader.getRemoteConfigVersions('')
+      const personalHistory = configLoader.getRemoteConfigVersions('_personal')
+      // 选择记录可能指向已被删除的历史快照，这种情况下实际生效的是 live 文件，
+      // 选择器应回落到「最新版本」，而不是显示一个列表里不存在的值。
+      const normalizeSelected = (list, selected) => {
+        return selected && list.some(item => item.version === selected) ? selected : ''
+      }
 
       return {
         version: pk.version,
         configProfiles: {
           internal,
+          user,
           sharedRemote: {
             ...sharedRemote,
             url: remoteConfig.url || '',
@@ -77,6 +90,11 @@ const localApi = {
             url: remoteConfig.personalUrl || '',
             enabled: remoteConfig.enabled === true && Boolean(remoteConfig.personalUrl),
           },
+          selectedVersion: normalizeSelected(history, selection.shared),
+          // core 的 setRemoteSelection 用 suffix 作为键：共享是 shared，个人是 _personal。
+          personalSelectedVersion: normalizeSelected(personalHistory, selection._personal),
+          history,
+          personalHistory,
         },
       }
     },
@@ -164,6 +182,23 @@ const localApi = {
       emitConfigChanged()
       return result
     },
+    getRemoteConfigVersions (suffix = '') {
+      return DevSidecar.api.config.getRemoteConfigVersions(suffix)
+    },
+    /**
+     * 切换远程配置版本。
+     *
+     * 注意：动态 api 桥接（ipcMain apiInvoke → invoke）只向目标方法传一个参数，
+     * 因此这里必须收一个 options 对象，不能写成 (suffix, version) 两个位置参数，
+     * 否则 version 会永远丢失，表现为「选择版本后没有生效」。
+     */
+    setRemoteConfigVersion (options = {}) {
+      const suffix = options?.suffix || ''
+      const version = options?.version || ''
+      const result = DevSidecar.api.config.setRemoteConfigVersion(suffix, version)
+      emitConfigChanged()
+      return result
+    },
     async removeUserConfig () {
       const result = await DevSidecar.api.config.removeUserConfig()
       emitConfigChanged()
@@ -171,8 +206,112 @@ const localApi = {
     },
   },
   /**
+   * 服务分组：按配置文件里的 `//` 注释分组，批量启停服务
+   */
+  serviceGroups: {
+    /**
+     * 列出所有服务分组
+     */
+    list () {
+      return serviceGroup.listCatalog(DevSidecar.api.config.get(), {
+        enhancedEnabled: localApi.setting.load().overwall === true,
+      })
+    },
+    /**
+     * 启用/停用服务
+     * @param options 参数
+     * @param options.ids 服务id列表
+     * @param options.enabled 是否启用
+     * @returns {object} { count, catalog }
+     */
+    setEnabled (options) {
+      const { ids, enabled } = options
+      const config = lodash.cloneDeep(DevSidecar.api.config.get())
+      const count = serviceGroup.applyEnabled(config, ids, enabled, {
+        enhancedEnabled: localApi.setting.load().overwall === true,
+      })
+      if (count > 0) {
+        DevSidecar.api.config.save(config)
+        emitConfigChanged()
+      }
+      return {
+        count,
+        catalog: localApi.serviceGroups.list(),
+      }
+    },
+    /**
+     * 修改用户自己添加/修改的配置项的值
+     * @param options 参数
+     * @param options.ids 服务id列表
+     * @param options.section 分区名（如 intercepts、preSetIpList、dnsMapping 等）
+     * @param options.text 配置值的JSON文本
+     * @returns {object} { ok, error, catalog } 修改失败时 ok 为 false，error 为错误信息
+     */
+    setPartValue (options) {
+      const { ids, section, text } = options
+      let value
+      try {
+        value = jsonApi.parse(text)
+      } catch (e) {
+        return { ok: false, error: `配置格式错误：${e.message}` }
+      }
+      if (value === undefined) {
+        return { ok: false, error: '配置值不能为空' }
+      }
+      const config = lodash.cloneDeep(DevSidecar.api.config.get())
+      const count = serviceGroup.setPartValue(config, ids, section, value, {
+        enhancedEnabled: localApi.setting.load().overwall === true,
+      })
+      if (count === 0) {
+        return { ok: false, error: '没有找到可修改的配置项' }
+      }
+      DevSidecar.api.config.save(config)
+      emitConfigChanged()
+      return {
+        ok: true,
+        catalog: localApi.serviceGroups.list(),
+      }
+    },
+    /**
+     * 把用户自己添加/修改的配置项恢复为默认值（内置 + 远程配置），默认配置里不存在时直接删除
+     * @param options 参数
+     * @param options.ids 服务id列表
+     * @param options.sections 需要恢复的分区名列表（不传表示该服务的全部配置项）
+     * @returns {object} { count, catalog } count 为被恢复的配置项数量
+     */
+    resetItems (options) {
+      const { ids, sections } = options
+      const config = lodash.cloneDeep(DevSidecar.api.config.get())
+      const count = serviceGroup.resetParts(config, ids, sections, {
+        enhancedEnabled: localApi.setting.load().overwall === true,
+      })
+      if (count > 0) {
+        DevSidecar.api.config.save(config)
+        emitConfigChanged()
+      }
+      return {
+        count,
+        catalog: localApi.serviceGroups.list(),
+      }
+    },
+    /**
+     * 查找会作用于指定域名的所有服务（匹配规则与代理一致，支持通配符与正则匹配串）
+     * @param {object} options { domain }
+     * @param {string} options.domain 待查找的域名
+     * @returns {object} { domain, ids } ids 为命中的服务 id 列表
+     */
+    matchHostname (options) {
+      const { domain } = options
+      const catalog = localApi.serviceGroups.list()
+      return {
+        domain,
+        ids: serviceGroup.matchCatalog(catalog, domain).map(item => item.id),
+      }
+    },
+  },
+  /**
    * 启动所有
-   * @returns {Promise<void>}
+   * @returns {Promise<void>} 无
    */
   startup () {
     return DevSidecar.api.startup({ mitmproxyPath, setting: localApi.setting.load() })
@@ -235,8 +374,11 @@ function invoke (api, param) {
   if (target == null) {
     target = lodash.get(DevSidecar.api, api)
   }
-  if (target == null) {
-    log.info('找不到此接口方法：', api)
+  if (typeof target !== 'function') {
+    // 明确 reject：让调用方 await 的 IPC Promise 能拿到可定位的错误，
+    // 而不是在 main 进程同步抛 TypeError（undefined(param)）
+    log.error(`找不到此接口方法：${api}`)
+    throw new Error(`api 接口不存在: ${api}`)
   }
   const ret = target(param)
   // log.info('api:', api, 'ret:', ret)
@@ -284,6 +426,16 @@ export default {
     DevSidecar.api.event.register('traffic', (event) => {
       if (win) {
         win.webContents.send('traffic', event)
+      }
+    })
+    DevSidecar.api.event.register('diagnostics', (event) => {
+      const sessionId = event && event.sessionId
+      const entry = backendDiagnostics.record(sessionId, {
+        source: 'proxy',
+        ...event,
+      })
+      if (win && entry) {
+        win.webContents.send('diagnostics', entry)
       }
     })
 

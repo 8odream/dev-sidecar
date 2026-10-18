@@ -1,9 +1,38 @@
+import { h } from 'vue'
+
 function install (app, api) {
   const updateParams = app.config.globalProperties.$global.update = { fromUser: false, autoDownload: false, progress: 0, checking: false, downloading: false, newVersion: false, isFullUpdate: true }
   api.ipc.on('update', (event, message) => {
     console.log('on message', event, message)
     handleUpdateMessage(message, app)
   })
+
+  let deferredUpdate
+  let visibilityListener
+
+  function showUpdateWhenVisible (value) {
+    if (updateParams.fromUser || document.visibilityState === 'visible') {
+      foundNewVersion(value)
+      return
+    }
+
+    deferredUpdate = value
+    if (visibilityListener) {
+      return
+    }
+
+    visibilityListener = () => {
+      if (document.visibilityState !== 'visible' || !deferredUpdate) {
+        return
+      }
+      const pendingUpdate = deferredUpdate
+      deferredUpdate = null
+      document.removeEventListener('visibilitychange', visibilityListener)
+      visibilityListener = null
+      foundNewVersion(pendingUpdate)
+    }
+    document.addEventListener('visibilitychange', visibilityListener)
+  }
 
   api.update = {
     checkForUpdate (fromUser) {
@@ -34,7 +63,7 @@ function install (app, api) {
     if (type === 'available') {
       updateParams.checking = false
       updateParams.newVersionData = message.value
-      foundNewVersion(message.value)
+      showUpdateWhenVisible(message.value)
     } else if (type === 'notAvailable') {
       updateParams.checking = false
       noNewVersion()
@@ -105,7 +134,17 @@ function install (app, api) {
   // }
 
   async function downloadNewVersion (value) {
-    const platform = await api.info.getSystemPlatform()
+    let platform
+    try {
+      platform = await api.info.getSystemPlatform()
+    } catch (e) {
+      updateParams.downloading = false
+      updateParams.checking = false
+      console.error('获取系统平台失败，无法自动下载更新包:', e)
+      app.config.globalProperties.$message.error(`无法自动下载：获取系统平台失败（${(e && e.message) || e}），请手动到 GitHub Releases 下载`)
+      openGithubUrl()
+      return
+    }
     console.log(`download new version: ${JSON.stringify(value)}, platform: ${platform}`)
     if (platform === 'linux' && !value.fullPackage) {
       goManualUpdate(value)
@@ -128,7 +167,13 @@ function install (app, api) {
 
     if (updateParams.autoDownload !== false) {
       app.config.globalProperties.$message.info('发现新版本，正在下载中...')
-      downloadNewVersion(value)
+      downloadNewVersion(value).catch((e) => {
+        // 下载入口兜底：异常可见，并复位状态，允许重试。
+        updateParams.downloading = false
+        updateParams.checking = false
+        console.error('自动下载更新包失败:', e)
+        app.config.globalProperties.$message.error(`自动下载失败：${(e && e.message) || e}，请手动到 GitHub Releases 下载`)
+      })
       return
     }
 
@@ -143,7 +188,7 @@ function install (app, api) {
       okText,
       okType,
       width: 700,
-      content: (h) => {
+      content: () => {
         const children = []
         if (value.releaseNotes) {
           const releaseNotes = typeof value.releaseNotes === 'string'
@@ -183,7 +228,13 @@ function install (app, api) {
       },
       onOk () {
         if (hasPartPackage || hasFullPackage) {
-          downloadNewVersion(value)
+          downloadNewVersion(value).catch((e) => {
+            // 下载入口兜底：异常可见，并复位状态，允许重试。
+            updateParams.downloading = false
+            updateParams.checking = false
+            console.error('自动下载更新包失败:', e)
+            app.config.globalProperties.$message.error(`自动下载失败：${(e && e.message) || e}，请手动到 GitHub Releases 下载`)
+          })
         } else {
           openGithubUrl()
         }

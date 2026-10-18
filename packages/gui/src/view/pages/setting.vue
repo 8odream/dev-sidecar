@@ -3,6 +3,7 @@ import { ipcRenderer } from 'electron'
 import { ProfileOutlined, SyncOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import Plugin from '../mixins/plugin'
 import { setThemeMode } from '../composables/theme'
+import { VERSION_3_FEATURE_ENABLED } from '../../version-3-feature.js'
 
 export default {
   name: 'Setting',
@@ -28,10 +29,35 @@ export default {
       ],
     }
   },
+  computed: {
+    // 历史日志（迁移/脱敏）入口随 P2P 功能开关隐藏，见 src/version-3-feature.js
+    p2pFeatureEnabled () {
+      return VERSION_3_FEATURE_ENABLED
+    },
+  },
   methods: {
     ready (config) {
+      this.ensureAppDefaults(config)
       this.urlBackup = config.app.remoteConfig.url
       this.personalUrlBackup = config.app.remoteConfig.personalUrl
+    },
+    ensureAppDefaults (config) {
+      if (!config || !config.app) {
+        return
+      }
+      if (!config.app.homeAd) {
+        config.app.homeAd = { text: '', url: '', description: '' }
+      }
+      if (config.app.logDetail == null) {
+        config.app.logDetail = false
+      }
+      if (config.app.showHomeAd == null) {
+        config.app.showHomeAd = true
+      }
+    },
+    setConfig (newConfig) {
+      this.ensureAppDefaults(newConfig)
+      this.config = newConfig
     },
     getEventKey (event) {
       // 忽略以下键
@@ -266,35 +292,24 @@ export default {
         this.reloadLoading = false
       }
     },
+    /**
+     * 「恢复默认」应用后的补充处理。
+     * resetDefault 会把 app.remoteConfig 重置为默认（enabled=true、地址=官方），
+     * 但 mixin 在 apply() 之前先调用了 ready()，把 urlBackup 覆盖成 reset 后的值，
+     * 导致 applyAfter 的「地址变化才重新下载」判断恒为 false —— 远程配置不会被重新拉取，
+     * 表现为「能拉取到远程配置，但最终不启用」。这里在应用后补一次拉取 + 应用。
+     */
+    async afterResetDefault () {
+      if (this.config?.app?.remoteConfig?.enabled !== true) {
+        return
+      }
+      await this.reloadRemoteConfig()
+    },
     async restoreFactorySettings () {
       this.$confirm({
         title: '确定要恢复出厂设置吗？',
         width: 610,
-        content: h => h('div', { class: 'restore-factory-settings' }, [
-          h('hr'),
-          h('div', [
-            h('h3', '操作警告：'),
-            h('div', [
-              '该功能将备份您的所有页面的个性化配置，并重载',
-              h('span', '默认配置'),
-              '及',
-              h('span', '远程配置'),
-              '，请谨慎操作！！！'
-            ])
-          ]),
-          h('hr'),
-          h('div', [
-            h('h3', '找回个性化配置的方法：'),
-            h('div', [
-              '1. 找到备份文件，路径：',
-              h('span', '~/.dev-sidecar/config.json.时间戳.bak.json'),
-              h('br'),
-              '2. 将该备份文件重命名为',
-              h('span', 'config.json'),
-              '，再重启软件即可恢复个性化配置。'
-            ])
-          ])
-        ]),
+        content: '操作警告：该功能将备份您的所有页面的个性化配置，并重载默认配置及远程配置，请谨慎操作！！！\n\n找回个性化配置：备份路径 ~/.dev-sidecar/config.json.时间戳.bak.json，改名为 config.json 后重启软件即可恢复。',
         cancelText: '取消',
         okText: '确定',
         onOk: async () => {
@@ -329,6 +344,23 @@ export default {
       const value = await this.$api.fileSelector.open(this.config.app.logFileSavePath, 'dir')
       if (value != null && value.length > 0) {
         this.config.app.logFileSavePath = value[0]
+      }
+    },
+    async onSecurityMigrate () {
+      try {
+        const ret = await this.$api.info.securityMigrate()
+        const acts = (ret && ret.results || []).map((x) => `${x.account}:${x.action}`).join(", ")
+        this.$message.success(`已迁移到 3.0.0（${ret && ret.backend}） ${acts}`)
+      } catch (e) {
+        this.$message.error(`安全迁移失败: ${e.message || e}`)
+      }
+    },
+    async onRedactLogs () {
+      try {
+        const ret = await this.$api.info.redactLogs()
+        this.$message.success(`已脱敏日志：${(ret && ret.changed) || 0} / ${(ret && ret.files) || 0} 个文件`)
+      } catch (e) {
+        this.$message.error(`脱敏失败: ${e.message || e}`)
       }
     },
   },
@@ -479,6 +511,28 @@ export default {
         </div>
       </a-form-item>
       <hr>
+      <a-form-item label="详细调试日志" :label-col="labelCol" :wrapper-col="wrapperCol">
+        <a-checkbox v-model:checked="config.app.logDetail">
+          问题排查时再开启
+        </a-checkbox>
+        <div class="form-help">
+          <strong>可能包含敏感信息</strong>（访问的 URL 路径等）。默认只记域名；凭据始终脱敏。<br>
+          修改后，重启 DS 才生效。
+        </div>
+      </a-form-item>
+      <!-- 历史日志（迁移/脱敏）：随 P2P 功能开关隐藏，见 src/version-3-feature.js -->
+      <a-form-item v-if="p2pFeatureEnabled" label="历史日志" :label-col="labelCol" :wrapper-col="wrapperCol">
+        <a-button style="margin-right:8px" @click="onSecurityMigrate()">
+          迁移到 3.0.0
+        </a-button>
+        <a-button @click="onRedactLogs()">
+          一键脱敏
+        </a-button>
+        <div class="form-help">
+          对日志目录下的 <code>*.log</code> 做脱敏覆盖（凭据、完整 URL 等）。<br>
+          旧日志可能仍含敏感信息，发送日志前可先点此处理。
+        </div>
+      </a-form-item>
       <a-form-item label="完全禁用日志" :label-col="labelCol" :wrapper-col="wrapperCol">
         <a-checkbox v-model:checked="config.app.logDisabled">
           不要任何日志
