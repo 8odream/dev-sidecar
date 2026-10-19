@@ -51,6 +51,10 @@ jobs:
           node-version: ${{ matrix.node }}
           registry-url: https://npm.pkg.github.com/
           cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            pnpm-workspace.yaml
+            .npmrc
 
       - name: "Setup Python environment, because of electron-builder install-app-deps requires Python setup tools"
         uses: actions/setup-python@v6
@@ -121,7 +125,7 @@ jobs:
           ls -lah;
 
           echo "======================================================================";
-          echo "pnpm install";
+          echo "清理缓存恢复带来的旧 node_modules 布局（.pnpm / .modules.yaml），强制 pnpm 12 按 --node-linker hoisted 全新构建";
           echo "--------------------";
           rm -rf node_modules packages/gui/node_modules packages/core/node_modules packages/mitmproxy/node_modules _script/node_modules vendor/ds-core/node_modules vendor/ds-core/core/node_modules vendor/ds-core/mitmproxy/node_modules;
           ls -lah;
@@ -197,7 +201,7 @@ jobs:
           echo "--------------------";
           bash _script/linux-arm64-prepare.sh;
 
-      - name: "npm run electron:build (Windows/macOS)"
+      - name: "npm run electron:build:ci (Windows/macOS)"
         if: ${{ matrix.os != 'ubuntu' }}
         env:
           VUE_APP_PUBLISH_URL: https://github.com/docmirror/dev-sidecar/releases/download/v${{ steps.package-info.outputs.version }}
@@ -209,11 +213,11 @@ jobs:
           dir || ls -lah;
 
           echo "======================================================================";
-          echo "npm run electron:build";
+          echo "npm run electron:build:ci";
           echo "--------------------";
-          npm run electron:build;
+          npm run electron:build:ci;
 
-      - name: "npm run electron:build (Linux & Linux ARM64)"
+      - name: "npm run electron:build:ci (Linux & Linux ARM64)"
         if: ${{ matrix.os == 'ubuntu' || matrix.os == 'ubuntu-24.04-arm' }}
         env:
           DEBUG: "@malept/flatpak-bundler"
@@ -226,9 +230,9 @@ jobs:
           ls -lah;
 
           echo "======================================================================";
-          echo "npm run electron:build";
+          echo "npm run electron:build:ci";
           echo "--------------------";
-          dbus-run-session -- npm run electron:build;
+          dbus-run-session -- npm run electron:build:ci;
 
       - name: 'Print dir "packages/gui/dist_electron/"'
         run: |

@@ -8,6 +8,8 @@ const localArch = process.arch === 'ia32' ? 'ia32' : process.arch === 'arm64' ? 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId: 'dev-sidecar',
+  // hoisted 布局下 builder 无法从 node_modules 推断 electron 版本，显式钉住
+  electronVersion: '41.3.0',
   productName: 'dev-sidecar',
   artifactName: 'DevSidecar-${version}-${arch}.${ext}',
   copyright: 'Copyright © 2020-' + new Date().getFullYear() + ' Greper, WangLiang, CuteOmega',
@@ -86,6 +88,9 @@ module.exports = {
   },
   linux: {
     icon: 'build/mac/',
+    // 包名 @blue-frontier/dev-sidecar-gui 去 scope 后含 '@'，electron-builder 26.17+ 的
+    // AppImage 目标会校验 executableName 合法字符，故显式指定不含 '@' 的可执行名
+    executableName: 'dev-sidecar-gui',
     target: isCI
       ? [
           { target: 'deb', arch: ['x64', 'arm64', 'armv7l'] },
